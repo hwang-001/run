@@ -1,0 +1,60 @@
+name: Build and publish Web
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot 4.7.2 and verify release checksums
+        shell: bash
+        run: |
+          base=https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable
+          editor=Godot_v4.7.2-stable_linux.x86_64.zip
+          templates=Godot_v4.7.2-stable_export_templates.tpz
+          curl -fL --retry 3 "$base/$editor" -o "$RUNNER_TEMP/$editor"
+          curl -fL --retry 3 "$base/$templates" -o "$RUNNER_TEMP/$templates"
+          (
+            cd "$RUNNER_TEMP"
+            echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $editor" | sha256sum -c
+            echo "f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011  $templates" | sha256sum -c
+            unzip -qo "$editor" -d godot-bin
+            unzip -jo "$templates" 'templates/web_nothreads_*.zip' -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          )
+          echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
+      - name: Validate the game and export Web
+        shell: bash
+        run: |
+          godot=Godot_v4.7.2-stable_linux.x86_64
+          "$godot" --headless --editor --import --path .
+          XDG_DATA_HOME="$RUNNER_TEMP/murang-smoke" "$godot" --headless --path . --script tests/smoke.gd
+          mkdir -p build/web
+          touch build/.gdignore
+          "$godot" --headless --path . --export-release Web build/web/index.html
+          test -s build/web/index.wasm
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Publish
+        id: deploy
+        uses: actions/deploy-pages@v4

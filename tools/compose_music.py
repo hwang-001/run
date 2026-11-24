@@ -1,0 +1,59 @@
+"""Render the original 16-bar game loop as an uncompressed WAV."""
+import math
+import random
+import struct
+import sys
+import wave
+
+RATE = 32000
+BEAT = 60 / 122
+LENGTH = round(BEAT * 64 * RATE)
+mix = [0.0] * LENGTH
+noise = random.Random(0)
+
+
+def add(beat, duration, note, level, voice):
+    root = math.tau * 440 * 2 ** ((note - 69) / 12)
+    for sample in range(int(duration * BEAT * RATE)):
+        t = sample / RATE
+        p = root * t
+        env = min(1, t * 160) * min(1, (duration * BEAT - t) * 38)
+        if voice == "bell":
+            signal = (math.sin(p) + 0.33 * math.sin(2.01*p) * math.exp(-t*7) + 0.18 * math.sin(3.99*p) * math.exp(-t*15)) * math.exp(-t*5)
+        elif voice == "bass":
+            signal = (math.sin(p) + 0.17 * math.sin(2*p)) * math.exp(-t*3)
+        elif voice == "kick":
+            signal = math.sin(math.tau * (47*t + 3*(1-math.exp(-22*t)))) * math.exp(-t*22)
+        else:
+            signal = (noise.random() * 2 - 1) * math.exp(-t*41)
+        index = (round(beat * BEAT * RATE) + sample) % LENGTH
+        mix[index] += level * env * signal
+
+
+chords = [(60, 64, 67, 74), (57, 60, 64, 71), (53, 57, 60, 67), (55, 59, 62, 69)]
+melodies = [
+    (76, 79, 84, 81, 79, 76), (76, 72, 74, 76, 81, 79),
+    (77, 76, 72, 74, 77, 81), (79, 74, 71, 74, 79, 83),
+    (84, 83, 79, 76, 79, 81), (81, 84, 88, 86, 84, 81),
+    (81, 77, 79, 81, 84, 86), (86, 83, 79, 76, 74, 79),
+]
+for bar in range(16):
+    chord = chords[bar % 4]
+    start = bar * 4
+    for i, offset in enumerate((0, 0.75, 1.5, 2, 2.75, 3.5)):
+        add(start + offset, 0.68, melodies[bar % 8][i], 0.19 if bar >= 4 else 0.17, "bell")
+        add(start + offset + 0.375, 0.56, melodies[bar % 8][i], 0.037, "bell")
+    for i, offset in enumerate((0.25, 1.25, 2.25, 3.25)):
+        add(start + offset, 0.7, chord[(i*3) % 4], 0.075, "bell")
+    for i, offset in enumerate((0, 1.5, 2, 3.25)):
+        add(start + offset, 0.72, chord[i % 2] - 24, 0.22, "bass")
+    for beat in range(4):
+        if beat % 2 == 0:
+            add(start + beat, 0.36, 36, 0.26, "kick")
+        add(start + beat + 0.5, 0.24, 72, 0.061, "hat")
+        if beat % 2 == 1:
+            add(start + beat, 0.3, 60, 0.14, "hat")
+
+with wave.open(sys.argv[1], "wb") as output:
+    output.setparams((1, 2, RATE, 0, "NONE", "not compressed"))
+    output.writeframes(struct.pack("<" + "h" * LENGTH, *(int(29000 * math.tanh(sample)) for sample in mix)))
