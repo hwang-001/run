@@ -152,7 +152,7 @@ func _check_viewport() -> void:
 
 func _start() -> void:
 	audio.play_sound(&"click")
-	if not audio.music.playing:
+	if not audio.music.playing and DisplayServer.get_name() != "headless":
 		audio.music.play()
 	distance = 0.0
 	speed = Tuning.START_SPEED

@@ -1,8 +1,14 @@
-name: Build and publish Web
+name: Web build and release validation
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      windows_release:
+        description: Optional release tag to validate on Windows
+        type: string
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -10,11 +16,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-pages
+  group: murang-run-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'release' && !inputs.windows_release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +38,7 @@ jobs:
             echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $editor" | sha256sum -c
             echo "f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011  $templates" | sha256sum -c
             unzip -qo "$editor" -d godot-bin
+            mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
             unzip -jo "$templates" 'templates/web_nothreads_*.zip' -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
           )
           echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
@@ -49,6 +57,7 @@ jobs:
           path: build/web
 
   deploy:
+    if: github.event.repository.has_pages || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -58,3 +67,26 @@ jobs:
       - name: Publish
         id: deploy
         uses: actions/deploy-pages@v4
+
+  windows-release:
+    if: github.event_name == 'release' || inputs.windows_release != ''
+    runs-on: windows-latest
+    steps:
+      - name: Download published package and launch its embedded game
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.windows_release }}
+          REPO: ${{ github.repository }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'MurangRun.zip'
+          $folder = Join-Path $env:RUNNER_TEMP 'MurangRun'
+          $tag = [uri]::EscapeDataString($env:RELEASE_TAG)
+          Invoke-WebRequest "https://github.com/$env:REPO/releases/download/$tag/MurangRun-v0.1-Windows-x64.zip" -OutFile $archive
+          Expand-Archive $archive $folder
+          Push-Location $folder
+          $process = Start-Process -FilePath '.\MurangRun.exe' -ArgumentList @('--headless', '--quit-after', '60', '--log-file', 'murang-smoke.log') -PassThru -Wait
+          $log = Get-Content -Raw 'murang-smoke.log'
+          Write-Output $log
+          if ($process.ExitCode -ne 0 -or $log -notmatch 'Godot Engine v4\.7\.2' -or $log -match 'SCRIPT ERROR|Failed to load|ERROR:') {
+            throw "Windows executable smoke test failed (exit $($process.ExitCode))"
+          }
