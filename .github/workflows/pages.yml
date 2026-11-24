@@ -2,6 +2,7 @@ name: Web build and release validation
 on:
   push:
     branches: [main]
+    tags: ["v[0-9]*"]
   workflow_dispatch:
     inputs:
       windows_release:
@@ -39,7 +40,11 @@ jobs:
             echo "f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011  $templates" | sha256sum -c
             unzip -qo "$editor" -d godot-bin
             mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
-            unzip -jo "$templates" 'templates/web_nothreads_*.zip' -d "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+            install_dir="$HOME/.local/share/godot/export_templates/4.7.2.stable"
+            unzip -jo "$templates" 'templates/web_nothreads_*.zip' -d "$install_dir"
+            if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+              unzip -jo "$templates" templates/windows_release_x86_64.exe -d "$install_dir"
+            fi
           )
           echo "$RUNNER_TEMP/godot-bin" >> "$GITHUB_PATH"
       - name: Validate the game and export Web
@@ -52,12 +57,29 @@ jobs:
           touch build/.gdignore
           "$godot" --headless --path . --export-release Web build/web/index.html
           test -s build/web/index.wasm
+      - name: Export Windows and package both platforms
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          mkdir -p build/windows "$RUNNER_TEMP/godot-notices"
+          Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-release "Windows Desktop" build/windows/MurangRun.exe
+          base=https://raw.githubusercontent.com/godotengine/godot/4.7.2-stable
+          for doc in LICENSE COPYRIGHT; do
+            curl -fsSL --retry 3 "$base/$doc.txt" -o "$RUNNER_TEMP/godot-notices/Godot-$doc.txt"
+          done
+          python3 tools/package_release.py build/release "$RUNNER_TEMP/godot-notices"
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: murang-release
+          path: build/release
       - uses: actions/upload-pages-artifact@v3
+        if: github.ref_type == 'branch'
         with:
           path: build/web
 
   deploy:
-    if: github.event.repository.has_pages || github.event_name == 'workflow_dispatch'
+    if: github.ref_type == 'branch' && (github.event.repository.has_pages || github.event_name == 'workflow_dispatch')
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -68,14 +90,33 @@ jobs:
         id: deploy
         uses: actions/deploy-pages@v4
 
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: murang-release
+          path: release
+      - name: Publish both downloads on GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/*.zip release/SHA256SUMS.txt             --repo "$GITHUB_REPOSITORY" --verify-tag --title "무랑 런 v0.1"             --notes-file .github/release-notes.md
+
   windows-release:
-    if: github.event_name == 'release' || inputs.windows_release != ''
+    needs: publish
+    if: always() && (needs.publish.result == 'success' || github.event_name == 'release' || inputs.windows_release != '')
     runs-on: windows-latest
     steps:
       - name: Download published package and launch its embedded game
         shell: pwsh
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.windows_release }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.windows_release || github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
           $archive = Join-Path $env:RUNNER_TEMP 'MurangRun.zip'
