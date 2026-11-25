@@ -8,6 +8,7 @@ var game: Node3D
 
 
 func _initialize() -> void:
+	seed(500)
 	call_deferred("_run")
 
 
@@ -44,11 +45,18 @@ func _step(count: int) -> void:
 
 
 func _run() -> void:
+	if not FileAccess.file_exists(RunnerSave.PATH):
+		var v01 := ConfigFile.new()
+		v01.set_value("records", "best", 421)
+		v01.set_value("records", "furthest", 201)
+		v01.set_value("records", "bank", 31)
+		_check(v01.save(RunnerSave.PATH) == OK, "Legacy save fixture was written")
 	game = GAME.instantiate()
 	root.add_child(game)
 	game.set_physics_process(false)
 	await process_frame
 	var initial_bank: int = game.records.bank
+	_check(game.ui.bank == initial_bank and initial_bank >= 31 and game.records.furthest >= 201, "Reads the v0.1 local record schema")
 	var player: MurangPlayer = game.player
 	var track: RunnerTrack = game.track
 	_check(game.state == game.State.MENU, "Opens on the title screen")
@@ -103,6 +111,7 @@ func _run() -> void:
 	_check(game.coins > 0, "Stock 3D coins register on contact")
 	var carried: int = game.coins
 
+	game.health = 3
 	_check_recovery(track, player)
 	for i in range(3):
 		var next := _next_obstacle(track, game.distance + 3.0)
@@ -131,10 +140,11 @@ func _run() -> void:
 	game._show_home()
 	_check(game.state == game.State.MENU and game.ui.bank == saved.bank, "Home displays the saved coin total")
 
+	_check_harbor()
 	_check_patterns(track)
 	_stress(track)
 	if failures.is_empty():
-		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows and pooled endurance")
+		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows, seamless 1,500 m boundary, isolated test starts and pooled endurance")
 	game.audio.music.stop()
 	for voice in game.audio.voices:
 		voice.stop()
@@ -156,7 +166,7 @@ func _check_recovery(track: RunnerTrack, player: MurangPlayer) -> void:
 	var fixture := RunnerTrack.Obstacle.new()
 	fixture.visual = Node3D.new()
 	chunk.visual.add_child(fixture.visual)
-	fixture.meter = game.distance + 1.0
+	fixture.meter = Tuning.FIRST_ROW - 6.0
 	fixture.lane = 0
 	fixture.kind = RunnerTrack.Kind.CRATE
 	fixture.armed = true
@@ -168,15 +178,69 @@ func _check_recovery(track: RunnerTrack, player: MurangPlayer) -> void:
 	player.slide = 0.0
 	track.check_contacts(fixture.meter - 0.1, fixture.meter, player)
 	_check(fixture.armed and player.immunity == 0.0, "A jump clears the low crate")
-	fixture.kind = RunnerTrack.Kind.OVERHEAD
+	fixture.kind = RunnerTrack.Kind.BOOM
 	player.elevation = 0.0
 	player.slide = 0.30
 	track.check_contacts(fixture.meter - 0.1, fixture.meter, player)
 	_check(fixture.armed and player.immunity == 0.0, "A slide clears the overhead barrier")
 	player.slide = 0.0
+	var before: int = game.health
+	track.check_contacts(fixture.meter - 1.4, fixture.meter + 1.4, player)
+	_check(game.health == before - 1 and not fixture.armed, "A swept contact catches a fully crossed obstacle")
+	game.health = before
+	player.immunity = 0.0
 	chunk.obstacles.pop_back()
 	fixture.visual.free()
 	track.scroll(game.distance, 0.0)
+
+
+func _check_harbor() -> void:
+	var track: RunnerTrack = game.track
+	game._start()
+	game.ready_remaining = 0.0
+	game.distance = Tuning.HARBOR_START - 0.12
+	track.reset(553, game.distance)
+	var pool_nodes := get_node_count()
+	var first := _next_obstacle(track, Tuning.HARBOR_START)
+	_check(first != null and first.kind >= RunnerTrack.Kind.BARREL, "Harbor-only obstacles are prepooled")
+	var first_signature := Vector3(first.lane, first.kind, first.meter)
+	_step(1)
+	_check(game.state == game.State.RUNNING and game.distance > Tuning.HARBOR_START, "Crossing 1,500 m stays in the running state")
+	_check(game.track == track and game.track.seed_value == 553 and get_node_count() == pool_nodes, "Transition reuses the same live track and nodes")
+	_check(game.district == 1 and game.ui.district == 1 and game.ui.area_time > 0.0, "Crossing announces the harbor")
+	_check(is_equal_approx(game.speed, Tuning.speed_at(Tuning.HARBOR_START - 0.12)), "Crossing preserves the continuous speed curve")
+	for chunk in track.chunks:
+		if chunk.index == 41:
+			_check(chunk.roads[0].visible and chunk.shore[0].visible and chunk.roads[1].visible, "The approach keeps the road beside the shore")
+			_check(chunk.boardwalk[2].visible and not chunk.roads[2].visible, "The 1,500 m tile starts the boardwalk")
+
+	game._show_home()
+	var before := RunnerSave.new()
+	before.read_records()
+	game.ui.test_requested.emit()
+	_check(game.test_run and game.distance == Tuning.HARBOR_START and game.district == 1, "Title test action enters the harbor")
+	_check(game.health == 3 and game.coins == 0 and game.ui.score == 0 and game.ui.test_run, "Test starts with clean run totals and full health")
+	_check(is_equal_approx(game.speed, Tuning.speed_at(Tuning.HARBOR_START)), "Direct and normal starts use the same speed curve")
+	track.reset(553, Tuning.HARBOR_START)
+	first = _next_obstacle(track, Tuning.HARBOR_START)
+	_check(Vector3(first.lane, first.kind, first.meter) == first_signature, "The same seed produces the exact same entry row on either path")
+	game._on_coin(Vector3.ZERO)
+	_check(game.coins == 1 and game._session_score() == 25, "Test coin scoring uses distance relative to the test start")
+	game.distance = 3500.0
+	game._save_progress()
+	game._finish()
+	_step(31)
+	var after := RunnerSave.new()
+	after.read_records()
+	_check(after.best == before.best and after.furthest == before.furthest and after.bank == before.bank,
+		"Test coin, distance and score never change regular records")
+	_check(not game.ui.new_best and game.ui.screen == RunnerUI.Screen.OVER, "Test results stay separate")
+	_key(KEY_ENTER)
+	_check(game.test_run and game.distance == Tuning.HARBOR_START, "Test replay returns to the same district")
+	game._show_home()
+	_key(KEY_ENTER)
+	_check(not game.test_run and game.distance == 0.0 and game.ui.score == 0, "Normal play still starts from zero afterward")
+	game._show_home()
 
 
 func _check_patterns(track: RunnerTrack) -> void:
@@ -184,7 +248,7 @@ func _check_patterns(track: RunnerTrack) -> void:
 		track.reset(seed_id)
 		var last_safe := 0
 		var last_row := Tuning.FIRST_ROW - Tuning.ROW_STEP
-		for chunk_index in range(32):
+		for chunk_index in range(67):
 			track.scroll(chunk_index * Tuning.CHUNK_LENGTH, 0.0)
 			for chunk in track.chunks:
 				if chunk.index != chunk_index:
@@ -193,19 +257,23 @@ func _check_patterns(track: RunnerTrack) -> void:
 					var coin := chunk.coins[row * 4]
 					if coin.collected:
 						continue
-					var row_meter := coin.meter + 8.65
+					var row_meter := coin.meter + (7.2 if coin.meter >= Tuning.HARBOR_START - 7.2 else 8.65)
 					var safe := roundi(coin.visual.position.x / Tuning.LANE)
 					var blocked := 0
 					for obstacle in chunk.obstacles:
 						if obstacle.armed and is_equal_approx(obstacle.meter, row_meter):
 							blocked += 1
+							var from_harbor := obstacle.kind >= RunnerTrack.Kind.BARREL
+							_check(from_harbor == (row_meter >= Tuning.HARBOR_START), "Uses the correct obstacle kit")
 							_check(obstacle.lane != safe, "Coin guidance denotes an open lane")
 					_check(blocked >= 1 and blocked <= 2, "Every occupied row leaves an open lane")
 					_check(abs(safe - last_safe) <= 1, "A safe path needs no double lane change")
-					_check(is_equal_approx(row_meter - last_row, Tuning.ROW_STEP), "Row gaps remain consistent across chunk edges")
+					var gap := row_meter - last_row
+					_check(gap >= Tuning.HARBOR_ROW_STEP - 0.01 and gap <= Tuning.ROW_STEP + 0.01, "Row gaps remain bounded across chunk edges")
+					_check(gap / Tuning.speed_at(row_meter) > Tuning.LANE / Tuning.LANE_SPEED + 0.13, "Reaction and lane-change budget remains at maximum speed")
 					last_safe = safe
 					last_row = row_meter
-	_check(Tuning.speed_at(1600) == Tuning.MAX_SPEED and Tuning.speed_at(0) == Tuning.START_SPEED, "Difficulty ramps to the speed cap")
+	_check(Tuning.speed_at(3500) == Tuning.MAX_SPEED and Tuning.speed_at(1501) < Tuning.speed_at(2700) and Tuning.speed_at(0) == Tuning.START_SPEED, "Difficulty ramps to the speed cap")
 
 
 func _stress(track: RunnerTrack) -> void:

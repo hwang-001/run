@@ -17,6 +17,7 @@ var impact := 0.0
 var visual_time := 0.0
 var gait := 0.0
 var stance := 0.0
+var landing := 0.0
 var lean := 0.0
 var collapse := 0.0
 var enter_x := 0.0
@@ -33,6 +34,12 @@ var shadow: MeshInstance3D
 func _ready() -> void:
 	model = CHARACTER.instantiate()
 	add_child(model)
+	for node in model.find_children("*", "MeshInstance3D", true, false):
+		var part := node as MeshInstance3D
+		if part.mesh and part.mesh.get_surface_count() > 0 and part.mesh.surface_get_format(0) & Mesh.ARRAY_FORMAT_COLOR:
+			var material := part.get_active_material(0) as StandardMaterial3D
+			if material:
+				material.vertex_color_use_as_albedo = true
 	body = model.find_child("Body", true, false) as Node3D
 	head = body.find_child("Head", true, false) as Node3D
 	tail = body.find_child("Tail", true, false) as Node3D
@@ -65,6 +72,7 @@ func reset() -> void:
 	impact = 0.0
 	collapse = 0.0
 	stance = 0.0
+	landing = 0.0
 	lean = 0.0
 	gait = 0.0
 	model.visible = true
@@ -110,6 +118,7 @@ func step(dt: float, speed: float, active: bool, defeated: bool) -> void:
 			if elevation <= 0.0:
 				elevation = 0.0
 				vertical_speed = 0.0
+				landing = 1.0
 				landed.emit()
 		slide = maxf(0.0, slide - dt)
 		immunity = maxf(0.0, immunity - dt)
@@ -120,20 +129,23 @@ func step(dt: float, speed: float, active: bool, defeated: bool) -> void:
 			collapse = move_toward(collapse, 1.0, dt * 2.4)
 			elevation = move_toward(elevation, 0.0, dt * 5.0)
 
+	landing = move_toward(landing, 0.0, dt * 6.8)
 	var running := active and elevation <= 0.0 and slide <= 0.0
-	gait = fposmod(gait + dt * TAU * (2.7 + speed * 0.078), TAU)
+	gait = fposmod(gait + dt * TAU * (2.15 + speed * 0.103), TAU)
 	lean = lerpf(lean, -enter_x * 0.22, 1.0 - exp(-dt * 15.0))
 	stance = move_toward(stance, float(slide > 0.0 and active), dt * 12.0)
 	var pose := 1.0 - exp(-dt * 21.0)
-	var stride := sin(gait) * 0.94 if running else 0.0
+	var stride := sin(gait) * lerpf(0.86, 1.15, clampf(speed / Tuning.MAX_SPEED, 0.0, 1.0)) if running else 0.0
 	var bob := absf(cos(gait)) * 0.071 if running else sin(visual_time * 3.2) * 0.027
 	var recoil := impact / 0.38 if active else 0.0
 	model.position.y = elevation
-	model.scale.y = lerpf(1.0, 0.57, stance)
-	body.position.y = 0.70 + bob - stance * 0.10 - collapse * 0.29
-	body.rotation.x = lerpf(-0.08 if running else 0.0, -0.55, stance) + recoil * 0.47 + collapse * 0.89
+	var stretch := clampf(vertical_speed * 0.010, -0.045, 0.070)
+	model.scale = Vector3(1.0 + landing * 0.055, lerpf(1.0 - landing * 0.11 + stretch, 0.43, stance), 1.0 + stance * 0.18)
+	body.position.y = 0.70 + bob - stance * 0.13 - collapse * 0.29 - landing * 0.035
+	body.rotation.x = lerpf(-0.08 - speed * 0.003 if running else 0.0, -0.67, stance) + recoil * 0.47 + collapse * 0.89
 	body.rotation.z = lean + recoil * sin(impact * 31.0) * 0.21 - collapse * 0.28
-	head.rotation.x = -body.rotation.x * 0.45
+	head.rotation.x = -body.rotation.x * 0.40 + sin(gait * 2.0) * 0.028 * float(running)
+	head.rotation.z = -lean * 0.30
 	tail.rotation.y = sin(visual_time * 8.1) * 0.14
 	var charm_height := sin(visual_time * 6.0) * 0.048
 	heart.position.y = 0.828 + charm_height
@@ -149,4 +161,5 @@ func step(dt: float, speed: float, active: bool, defeated: bool) -> void:
 		arms[i].rotation.x = lerpf(arms[i].rotation.x, lerpf(arm_target, -0.98, stance) + recoil * 0.65, pose)
 
 	model.visible = not active or immunity <= 0.0 or int(immunity * 15.0) % 2 == 0
-	shadow.scale = Vector3.ONE * (1.0 + elevation * 0.29)
+	shadow.scale = Vector3(1.0 + elevation * 0.27, 1.0 + elevation * 0.26 + stance * 0.17, 1.0)
+	(shadow.material_override as ShaderMaterial).set_shader_parameter("strength", 0.40 / (1.0 + elevation * 1.07))

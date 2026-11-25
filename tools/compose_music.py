@@ -6,7 +6,8 @@ import sys
 import wave
 
 RATE = 32000
-BEAT = 60 / 122
+HARBOR = "--harbor" in sys.argv[2:]
+BEAT = 60 / (134 if HARBOR else 122)
 LENGTH = round(BEAT * 64 * RATE)
 mix = [0.0] * LENGTH
 noise = random.Random(0)
@@ -37,10 +38,18 @@ melodies = [
     (84, 83, 79, 76, 79, 81), (81, 84, 88, 86, 84, 81),
     (81, 77, 79, 81, 84, 86), (86, 83, 79, 76, 74, 79),
 ]
+if HARBOR:
+    chords = [(57, 61, 64, 71), (54, 57, 61, 68), (50, 54, 57, 64), (52, 56, 59, 66)]
+    melodies = [
+        (76, 81, 83, 85, 81, 76), (76, 80, 78, 73, 76, 78),
+        (78, 81, 86, 83, 81, 78), (80, 78, 76, 71, 76, 80),
+        (81, 88, 85, 83, 85, 81), (81, 80, 76, 73, 76, 81),
+        (86, 85, 81, 78, 81, 86), (83, 80, 76, 78, 80, 83),
+    ]
 for bar in range(16):
     chord = chords[bar % 4]
     start = bar * 4
-    for i, offset in enumerate((0, 0.75, 1.5, 2, 2.75, 3.5)):
+    for i, offset in enumerate((0, 0.67, 1.5, 2.0, 2.67, 3.5) if HARBOR else (0, 0.75, 1.5, 2, 2.75, 3.5)):
         add(start + offset, 0.68, melodies[bar % 8][i], 0.19 if bar >= 4 else 0.17, "bell")
         add(start + offset + 0.375, 0.56, melodies[bar % 8][i], 0.037, "bell")
     for i, offset in enumerate((0.25, 1.25, 2.25, 3.25)):

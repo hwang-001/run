@@ -20,7 +20,12 @@ def color(name, hex_color, roughness=0.75):
     return material
 
 
-fur = color("Vanilla fur", "f5c38e")
+fur = color("Vanilla fur", "f2c28f")
+gradient_fur = color("Soft vanilla fur", "ffffff")
+gradient_node = gradient_fur.node_tree.nodes.new("ShaderNodeVertexColor")
+gradient_node.layer_name = "Fur"
+gradient_fur.node_tree.links.new(gradient_node.outputs["Color"], gradient_fur.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+paw_pink = color("Strawberry toe pads", "edaa9b")
 cream = color("Milk fur", "fff4df")
 pink = color("Peach pink", "f48a97")
 rose = color("Rosy heart", "fd6486", 0.45)
@@ -56,6 +61,22 @@ def blob(name, parent, material, location, radii):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=20)
     node = finish(bpy.context.object, name, parent, material, location)
     node.scale = radii
+    return node
+
+
+def fur_gradient(node):
+    attr = node.data.color_attributes.new(name="Fur", type="FLOAT_COLOR", domain="POINT")
+    node.data.color_attributes.active_color = attr
+    for vertex in node.data.vertices:
+        height = (vertex.co.z + 1) * 0.5
+        warmth = 0.35 * abs(vertex.co.x) + 0.65 * height
+        # Bake a soft pastel range for the Compatibility renderer's vertex colors.
+        attr.data[vertex.index].color = (
+            0.87 + 0.085 * height,
+            0.70 + 0.119 * warmth,
+            0.51 + 0.171 * warmth,
+            1.0,
+        )
     return node
 
 
@@ -135,7 +156,7 @@ def stroke(name, parent, material, points, radius):
 
 root = pivot("MurangRig", (0, 0, 0))
 body = pivot("Body", (0, 0, 0.70), root)
-blob("Round torso", body, fur, (0, 0, 0.035), (0.365, 0.292, 0.40))
+fur_gradient(blob("Round torso", body, gradient_fur, (0, 0, 0.035), (0.365, 0.292, 0.40)))
 bib = blob("White bib", body, cream, (0, 0.242, 0.093), (0.245, 0.07, 0.211))
 bib.rotation_euler.x = 0.18
 blob("Bib point", body, cream, (-0.026, 0.270, -0.085), (0.083, 0.037, 0.101))
@@ -145,7 +166,11 @@ for sign, side in [(-1, "L"), (1, "R")]:
     paw.rotation_euler.y = -sign * 0.38
     leg = pivot("Leg" + side, (sign*0.19, -0.024, -0.225), body)
     blob("Hindpaw" + side, leg, fur, (0, 0.018, -0.242), (0.155, 0.192, 0.20))
-    blob("Paw sole" + side, leg, pink, (0, 0.043, -0.424), (0.095, 0.111, 0.017))
+    blob("Paw sole" + side, leg, paw_pink, (0, 0.003, -0.429), (0.068, 0.069, 0.019))
+    for toe in range(3):
+        blob("Toe pad " + side + str(toe), leg, paw_pink,
+             ((toe - 1) * 0.045, 0.089 - abs(toe - 1) * 0.013, -0.421),
+             (0.022, 0.028, 0.012))
 
 tail = pivot("Tail", (0.042, -0.255, -0.143), body)
 tube("Vanilla-tipped tail", tail, fur, [
@@ -160,7 +185,7 @@ tube("Vanilla-tipped tail", tail, fur, [
 ], cream)
 
 head = pivot("Head", (0, 0.008, 0.578), body)
-blob("Round head", head, fur, (0, 0, 0), (0.597, 0.446, 0.482))
+fur_gradient(blob("Round head", head, gradient_fur, (0, 0, 0), (0.597, 0.446, 0.482)))
 for sign, side in [(-1, "L"), (1, "R")]:
     tube("Ear" + side, head, fur, [
         ((sign*0.343, 0, 0.222), 0.212, 0.144),

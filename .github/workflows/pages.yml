@@ -106,7 +106,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" release/*.zip release/SHA256SUMS.txt             --repo "$GITHUB_REPOSITORY" --verify-tag --title "무랑 런 v0.1"             --notes-file .github/release-notes.md
+          version="${GITHUB_REF_NAME%.*}"
+          test -s "release/MurangRun-$version-Windows-x64.zip"
+          gh release create "$GITHUB_REF_NAME" "release/MurangRun-$version-Windows-x64.zip" "release/MurangRun-$version-Web.zip" release/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag --title "무랑 런 $version" --notes-file .github/release-notes.md
 
   windows-release:
     needs: publish
@@ -122,7 +124,8 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP 'MurangRun.zip'
           $folder = Join-Path $env:RUNNER_TEMP 'MurangRun'
           $tag = [uri]::EscapeDataString($env:RELEASE_TAG)
-          Invoke-WebRequest "https://github.com/$env:REPO/releases/download/$tag/MurangRun-v0.1-Windows-x64.zip" -OutFile $archive
+          $version = $env:RELEASE_TAG -replace '\.[0-9]+$', ''
+          Invoke-WebRequest "https://github.com/$env:REPO/releases/download/$tag/MurangRun-$version-Windows-x64.zip" -OutFile $archive
           Expand-Archive $archive $folder
           Push-Location $folder
           $process = Start-Process -FilePath '.\MurangRun.exe' -ArgumentList @('--headless', '--quit-after', '60', '--log-file', 'murang-smoke.log') -PassThru -Wait
