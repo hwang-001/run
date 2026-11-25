@@ -7,7 +7,8 @@ import wave
 
 RATE = 32000
 HARBOR = "--harbor" in sys.argv[2:]
-BEAT = 60 / (134 if HARBOR else 122)
+FOREST = "--forest" in sys.argv[2:]
+BEAT = 60 / (146 if FOREST else (134 if HARBOR else 122))
 LENGTH = round(BEAT * 64 * RATE)
 mix = [0.0] * LENGTH
 noise = random.Random(0)
@@ -45,6 +46,14 @@ if HARBOR:
         (78, 81, 86, 83, 81, 78), (80, 78, 76, 71, 76, 80),
         (81, 88, 85, 83, 85, 81), (81, 80, 76, 73, 76, 81),
         (86, 85, 81, 78, 81, 86), (83, 80, 76, 78, 80, 83),
+    ]
+if FOREST:
+    chords = [(62, 65, 69, 72), (58, 62, 65, 69), (65, 69, 72, 79), (60, 64, 67, 74)]
+    melodies = [
+        (74, 77, 81, 79, 77, 74), (74, 77, 82, 81, 77, 74),
+        (77, 81, 84, 86, 84, 81), (79, 76, 74, 76, 79, 84),
+        (86, 84, 81, 77, 81, 84), (82, 81, 77, 74, 77, 81),
+        (84, 89, 88, 84, 81, 84), (84, 79, 76, 79, 83, 84),
     ]
 for bar in range(16):
     chord = chords[bar % 4]

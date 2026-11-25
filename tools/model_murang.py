@@ -165,11 +165,13 @@ for sign, side in [(-1, "L"), (1, "R")]:
     paw = blob("Forepaw" + side, arm, fur, (sign*0.10, 0.04, -0.121), (0.146, 0.147, 0.239))
     paw.rotation_euler.y = -sign * 0.38
     leg = pivot("Leg" + side, (sign*0.19, -0.024, -0.225), body)
-    blob("Hindpaw" + side, leg, fur, (0, 0.018, -0.242), (0.155, 0.192, 0.20))
-    blob("Paw sole" + side, leg, paw_pink, (0, 0.003, -0.429), (0.068, 0.069, 0.019))
+    blob("Upper leg" + side, leg, fur, (0, 0.013, -0.107), (0.140, 0.157, 0.158))
+    knee = pivot("Knee" + side, (0, 0.008, -0.175), leg)
+    blob("Hindpaw" + side, knee, fur, (0, 0.010, -0.130), (0.148, 0.184, 0.132))
+    blob("Paw sole" + side, knee, paw_pink, (0, -0.005, -0.254), (0.068, 0.069, 0.019))
     for toe in range(3):
-        blob("Toe pad " + side + str(toe), leg, paw_pink,
-             ((toe - 1) * 0.045, 0.089 - abs(toe - 1) * 0.013, -0.421),
+        blob("Toe pad " + side + str(toe), knee, paw_pink,
+             ((toe - 1) * 0.045, 0.089 - abs(toe - 1) * 0.013, -0.246),
              (0.022, 0.028, 0.012))
 
 tail = pivot("Tail", (0.042, -0.255, -0.143), body)

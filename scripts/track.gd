@@ -3,8 +3,9 @@ extends Node3D
 
 signal coin_taken(at: Vector3)
 signal obstacle_hit(at: Vector3)
+signal heart_taken(at: Vector3)
 
-enum Kind { CRATE, CONE, BARRIER, FENCE, OVERHEAD, TRUCK, BARREL, CARGO, BOOM, DINGHY }
+enum Kind { CRATE, CONE, BARRIER, FENCE, OVERHEAD, TRUCK, BARREL, CARGO, BOOM, DINGHY, LOG, BOULDER, WOOD_FENCE, BOUGH, WOOD_BOX, LOG_WALL }
 
 const CITY := "res://assets/city/"
 const NATURE := "res://assets/props/nature-kit/"
@@ -13,13 +14,16 @@ const WORKS := "res://assets/props/city-kit-roads/"
 const PLATFORM := "res://assets/props/platformer-kit/"
 const TRUCKS := "res://assets/vehicles/"
 const SAFE_LANES := [0, -1, -1, 0, 1, 1, 0, 0, -1, 0, 1, 0]
-const OBSTACLE_DEPTH := [0.53, 0.38, 0.41, 0.20, 0.36, 1.04, 0.56, 0.67, 0.40, 1.17]
-const OBSTACLE_WIDTH := [0.55, 0.38, 0.66, 0.80, 0.78, 0.83, 0.53, 0.61, 0.79, 0.80]
-const OBSTACLE_TOP := [1.06, 0.84, 1.04, 0.87, 2.80, 3.20, 0.97, 1.18, 2.70, 2.60]
-const OBSTACLE_BOTTOM := [0.0, 0.0, 0.0, 0.0, 1.06, 0.0, 0.0, 0.0, 1.04, 0.0]
+const OBSTACLE_DEPTH := [0.53, 0.38, 0.41, 0.20, 0.36, 1.04, 0.56, 0.67, 0.40, 1.17, 0.45, 0.89, 0.25, 0.40, 0.57, 0.75]
+const OBSTACLE_WIDTH := [0.55, 0.38, 0.66, 0.80, 0.78, 0.83, 0.53, 0.61, 0.79, 0.80, 0.77, 0.76, 0.80, 0.82, 0.58, 0.81]
+const OBSTACLE_TOP := [1.06, 0.84, 1.04, 0.87, 2.80, 3.20, 0.97, 1.18, 2.70, 2.60, 0.91, 2.68, 0.89, 2.37, 1.04, 2.60]
+const OBSTACLE_BOTTOM := [0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0]
 const ROAD_WIDTH := 11.3
 const TILES_PER_CHUNK := 3
 const COINS_PER_ROW := 4
+const KIND_CAPACITY := 3
+const FOREST_COMBO := [Kind.LOG, Kind.BOUGH, Kind.BOULDER, Kind.WOOD_FENCE, Kind.BOUGH, Kind.WOOD_BOX, Kind.LOG_WALL, Kind.LOG]
+const FOREST_CROSS := [Kind.BOULDER, Kind.LOG_WALL, Kind.LOG, Kind.WOOD_BOX, Kind.LOG, Kind.BOUGH, Kind.WOOD_FENCE, Kind.BOUGH]
 const HARBOR_ORDER := [Kind.BARREL, Kind.BOOM, Kind.CARGO, Kind.DINGHY, Kind.BOOM, Kind.CARGO]
 const HARBOR_CHAIN := [Kind.BARREL, Kind.BARREL, Kind.BOOM, Kind.BOOM, Kind.CARGO, Kind.DINGHY]
 
@@ -50,6 +54,10 @@ class Chunk:
 	var boardwalk: Array[Node3D] = []
 	var roads: Array[Node3D] = []
 	var entry: Node3D
+	var forest_entry: Node3D
+	var forest_banks: Array[Node3D] = []
+	var forest_verges: Array[Node3D] = []
+	var forest_floors: Array[Node3D] = []
 	var items: Node3D
 
 
@@ -62,11 +70,17 @@ var scenes := {}
 var lane_mark: QuadMesh
 var lane_material: StandardMaterial3D
 var coast: CoastScenery
+var forest: ForestScenery
+var hearts: RunnerHeartPool
 var preview := false
 
 
 func _ready() -> void:
 	coast = CoastScenery.new(_model)
+	forest = ForestScenery.new(coast, _model)
+	hearts = RunnerHeartPool.new()
+	add_child(hearts)
+	hearts.taken.connect(func(at: Vector3): heart_taken.emit(at))
 	lane_mark = QuadMesh.new()
 	lane_mark.size = Vector2(0.09, 1.25)
 	lane_material = StandardMaterial3D.new()
@@ -77,13 +91,16 @@ func _ready() -> void:
 
 
 func _model(parent: Node3D, path: String, at: Vector3, size: Vector3, angle := 0.0, shadow := true) -> Node3D:
-	if not scenes.has(path):
+	var first_load := not scenes.has(path)
+	if first_load:
 		scenes[path] = load(path + ".glb")
 	var scene: PackedScene = scenes[path]
 	var item := scene.instantiate() as Node3D
 	item.position = at
 	item.scale = size
 	item.rotation.y = angle
+	if first_load and (path.begins_with(ForestScenery.NATURE) or path.begins_with(ForestScenery.CASTLE)):
+		forest.finish_model(item, path)
 	parent.add_child(item)
 	if not shadow:
 		for child in item.find_children("*", "MeshInstance3D", true, false):
@@ -104,40 +121,51 @@ func _build_chunk(theme: int) -> Chunk:
 	chunk.entry = Node3D.new()
 	chunk.visual.add_child(chunk.entry)
 	_build_gate(chunk.entry)
+	chunk.forest_entry = Node3D.new()
+	chunk.visual.add_child(chunk.forest_entry)
+	_build_forest_gate(chunk.forest_entry)
 	for tile in range(TILES_PER_CHUNK):
 		var z := -6.0 - tile * Tuning.ROW_STEP
 		var road := Node3D.new()
 		var street := Node3D.new()
 		var shore := Node3D.new()
 		var boardwalk := Node3D.new()
-		for group in [road, street, shore, boardwalk]:
+		var forest_bank := Node3D.new()
+		var forest_floor := Node3D.new()
+		var verge := Node3D.new()
+		for group in [road, street, shore, boardwalk, forest_bank, forest_floor, verge]:
 			chunk.visual.add_child(group)
 		chunk.roads.append(road)
 		chunk.street.append(street)
 		chunk.shore.append(shore)
 		chunk.boardwalk.append(boardwalk)
+		chunk.forest_banks.append(forest_bank)
+		chunk.forest_verges.append(verge)
+		chunk.forest_floors.append(forest_floor)
 		_build_street(street, theme, tile, z)
 		coast.build_shore(shore, theme, tile, z)
 		coast.boardwalk(boardwalk, z)
+		forest.build_banks(forest_bank, theme, tile, z)
+		forest.build_verge(verge, tile, z)
+		forest.floor_tile(forest_floor, z, tile == 1)
 		_model(road, CITY + ("road-straight-lightposts" if tile == 1 else "road-straight"),
 			Vector3(0, 0, z), Vector3(ROAD_WIDTH, 6.8, 12))
 		coast.asphalt_strip(road, z)
 		_build_marks(chunk.visual, z)
-		for group in [street, shore, boardwalk]:
+		for group in [street, shore, boardwalk, forest_bank, forest_floor]:
 			_batch_repeats(group)
-	# Each row can select up to two kinds. Two slots per kind allow matching pairs.
-	for row in range(Tuning.ROWS_PER_CHUNK):
-		for kind in range(Kind.size()):
-			for slot in range(2):
-				var obstacle := Obstacle.new()
-				obstacle.kind = kind
-				obstacle.visual = _build_obstacle(chunk.items, kind)
-				chunk.obstacles.append(obstacle)
-		for coin_index in range(COINS_PER_ROW):
-			var coin := Pickup.new()
-			coin.visual = _model(chunk.items, CoastScenery.ARCADE + "coin-gold", Vector3.ZERO, Vector3.ONE * 1.04, 0.0, false)
-			_finish_coin(coin)
-			chunk.coins.append(coin)
+	# Pool each kit piece at chunk scope. A full kind uses another piece in the same kit.
+	for kind in range(Kind.size()):
+		for slot in range(KIND_CAPACITY):
+			var obstacle := Obstacle.new()
+			obstacle.kind = kind
+			obstacle.visual = _build_obstacle(chunk.items, kind)
+			chunk.obstacles.append(obstacle)
+	for coin_index in range(Tuning.ROWS_PER_CHUNK * COINS_PER_ROW):
+		var coin := Pickup.new()
+		coin.visual = _model(chunk.items, CoastScenery.ARCADE + "coin-gold", Vector3.ZERO, Vector3.ONE * 1.04, 0.0, false)
+		_finish_coin(coin)
+		chunk.coins.append(coin)
 	return chunk
 
 
@@ -231,6 +259,13 @@ func _build_gate(parent: Node3D) -> void:
 	coast.label(parent, "산호빛 항구", Vector3(-6.5, 2.83, -1.1), 0.0062, Color("#ffd7ad"), CoastScenery.KOREAN)
 
 
+func _build_forest_gate(parent: Node3D) -> void:
+	_model(parent, CoastScenery.PLANTS + "sign", Vector3(-6.4, 0.19, -0.7),
+		Vector3.ONE * 8.3, PI, false)
+	coast.label(parent, "PINEWIND VALLEY", Vector3(-6.4, 4.1, -0.33), 0.0068, Color("#edffd4"), CoastScenery.FONT)
+	coast.label(parent, "솔바람 계곡", Vector3(-6.4, 3.67, -0.32), 0.0060, Color("#dcfcc5"), CoastScenery.KOREAN)
+
+
 func _finish_coin(coin: Pickup) -> void:
 	for item in coin.visual.find_children("*", "MeshInstance3D", true, false):
 		var mesh := item as MeshInstance3D
@@ -263,7 +298,7 @@ func _build_obstacle(parent: Node3D, kind: int) -> Node3D:
 		Kind.OVERHEAD:
 			for side in [-1, 1]:
 				_model(pivot, WORKS + "construction-barrier", Vector3(side * 0.95, 0, 0), Vector3(3.25, 10.2, 4.3))
-			_model(pivot, WORKS + "construction-barrier", Vector3(0, 1.06, 0), Vector3(5.0, 8.0, 9.0), PI/2.0)
+			_model(pivot, WORKS + "construction-barrier", Vector3(0, 1.29, 0), Vector3(5.0, 8.0, 9.0), PI/2.0)
 			var sign := Label3D.new()
 			sign.text = "▼"
 			sign.font = preload("res://assets/ui/Outfit-Medium.ttf")
@@ -286,14 +321,37 @@ func _build_obstacle(parent: Node3D, kind: int) -> Node3D:
 			for side in [-1, 1]:
 				_model(pivot, CoastScenery.PIRATE + "barrel",
 					Vector3(side * 1.00, 0, 0), Vector3(0.31, 1.08, 0.37))
-			_model(pivot, CoastScenery.ARCADE + "fence-rope", Vector3(0, 1.06, 0),
+			_model(pivot, CoastScenery.ARCADE + "fence-rope", Vector3(0, 1.29, 0),
 				Vector3(2.02, 2.55, 3.50))
-			coast.label(pivot, "▼", Vector3(0, 1.58, 0.44), 0.009, Color("#fff0a2"), CoastScenery.KOREAN)
+			coast.label(pivot, "▼", Vector3(0, 1.91, 0.44), 0.009, Color("#fff0a2"), CoastScenery.KOREAN)
 		Kind.DINGHY:
 			_model(pivot, CoastScenery.PIRATE + "boat-row-large", Vector3(0, -0.08, 0),
 				Vector3(0.57, 1.45, 0.80), -0.11)
 			_model(pivot, CoastScenery.PIRATE + "crate-bottles", Vector3(0, 0.39, 0.25), Vector3(0.92, 1.27, 0.88))
 			coast.label(pivot, "‹   ›", Vector3(0, 1.66, 0.99), 0.008, Color("#ffc088"), CoastScenery.FONT)
+		Kind.LOG:
+			_model(pivot, ForestScenery.NATURE + "log-large", Vector3.ZERO, Vector3(1.51, 2.18, 1.44))
+			coast.label(pivot, "▲", Vector3(0, 0.77, 0.52), 0.007, Color("#ffe0a0"), CoastScenery.KOREAN)
+		Kind.BOULDER:
+			_model(pivot, ForestScenery.NATURE + "rock-tallc", Vector3(0, 0.13, 0.0), Vector3(3.2, 3.4, 3.9), 0.22)
+			coast.label(pivot, "‹   ›", Vector3(0, 1.56, 0.91), 0.008, Color("#ffddb1"), CoastScenery.FONT)
+		Kind.WOOD_FENCE:
+			_model(pivot, ForestScenery.NATURE + "fence-simplelow", Vector3(0, 0, 0.76),
+				Vector3(1.50, 4.50, 1.60))
+		Kind.BOUGH:
+			for side in [-1, 1]:
+				_model(pivot, ForestScenery.NATURE + "log-large", Vector3(side * 0.97, 0.77, 0.0),
+					Vector3(1.44, 0.61, 0.73), 0).rotation.z = PI / 2.0
+			_model(pivot, ForestScenery.NATURE + "log-large", Vector3(0, 1.29, 0), Vector3(2.02, 1.0, 1.30))
+			_model(pivot, ForestScenery.NATURE + "plant-bushlarge", Vector3(0.21, 1.62, -0.03),
+				Vector3(3.28, 2.10, 2.20), 0.23)
+			coast.label(pivot, "▼", Vector3(0, 1.60, 0.44), 0.008, Color("#e5ffb8"), CoastScenery.KOREAN)
+		Kind.WOOD_BOX:
+			_model(pivot, ForestScenery.CRATE_KIT + "crate", Vector3.ZERO, Vector3.ONE * 0.95)
+		Kind.LOG_WALL:
+			_model(pivot, ForestScenery.NATURE + "log-stack", Vector3.ZERO, Vector3(3.55, 4.13, 2.13))
+			_model(pivot, ForestScenery.NATURE + "log-stack", Vector3(0.10, 1.20, 0.05), Vector3(2.80, 3.4, 1.82))
+			coast.label(pivot, "‹   ›", Vector3(0, 1.42, 0.90), 0.008, Color("#ffddb1"), CoastScenery.FONT)
 	return pivot
 
 
@@ -302,6 +360,7 @@ func reset(run_seed: int, start_at := 0.0, show_preview := false) -> void:
 	phase = posmod(run_seed, SAFE_LANES.size())
 	total_reuses = 0
 	preview = show_preview
+	hearts.reset(run_seed, start_at, preview)
 	var first := floori(start_at / Tuning.CHUNK_LENGTH) - 1
 	for index in range(first, first + chunks.size()):
 		_fill_chunk(chunks[posmod(index + 1, chunks.size())], index)
@@ -323,10 +382,15 @@ func _fill_chunk(chunk: Chunk, index: int) -> void:
 		var tile_start := start + tile * Tuning.ROW_STEP
 		chunk.roads[tile].visible = tile_start < Tuning.HARBOR_START
 		chunk.street[tile].visible = tile_start < Tuning.HARBOR_APPROACH
-		chunk.shore[tile].visible = tile_start >= Tuning.HARBOR_APPROACH
-		chunk.boardwalk[tile].visible = tile_start >= Tuning.HARBOR_START
+		chunk.shore[tile].visible = tile_start >= Tuning.HARBOR_APPROACH and tile_start < Tuning.FOREST_APPROACH
+		chunk.boardwalk[tile].visible = tile_start >= Tuning.HARBOR_START and tile_start < Tuning.FOREST_START
+		chunk.forest_banks[tile].visible = tile_start >= Tuning.FOREST_APPROACH
+		chunk.forest_verges[tile].visible = tile_start >= Tuning.FOREST_GREENBELT and tile_start < Tuning.FOREST_APPROACH
+		chunk.forest_floors[tile].visible = tile_start >= Tuning.FOREST_START
 	chunk.entry.visible = not preview and start <= Tuning.HARBOR_START and start + Tuning.CHUNK_LENGTH > Tuning.HARBOR_START
 	chunk.entry.position.z = -(Tuning.HARBOR_START - start)
+	chunk.forest_entry.visible = not preview and start <= Tuning.FOREST_START and start + Tuning.CHUNK_LENGTH > Tuning.FOREST_START
+	chunk.forest_entry.position.z = -(Tuning.FOREST_START - start)
 	chunk.items.visible = not preview
 	if preview:
 		return
@@ -336,6 +400,9 @@ func _fill_chunk(chunk: Chunk, index: int) -> void:
 	var full_harbor := start >= Tuning.HARBOR_START
 	var row_count := Tuning.ROWS_PER_CHUNK if full_harbor else 3
 	var first_harbor_chunk := ceili(Tuning.HARBOR_START / Tuning.CHUNK_LENGTH)
+	var used: Array[int] = []
+	used.resize(Kind.size())
+	used.fill(0)
 	for row in range(row_count):
 		var offset := (3.0 + row * Tuning.HARBOR_ROW_STEP) if full_harbor else (4.0 + row * Tuning.ROW_STEP)
 		var meter := start + offset
@@ -344,10 +411,10 @@ func _fill_chunk(chunk: Chunk, index: int) -> void:
 		var row_number := index * 3 + row
 		if full_harbor:
 			row_number = first_harbor_chunk * 3 + (index - first_harbor_chunk) * row_count + row
-		_fill_row(chunk, row, row_number, offset, meter, rng)
+		_fill_row(chunk, row, row_number, offset, meter, rng, used)
 
 
-func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: float, rng: RandomNumberGenerator) -> void:
+func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: float, rng: RandomNumberGenerator, used: Array[int]) -> void:
 	var harbor := meter >= Tuning.HARBOR_START
 	var safe: int = SAFE_LANES[posmod(row_number + phase, SAFE_LANES.size())]
 	var closed := [-1, 0, 1]
@@ -357,30 +424,36 @@ func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: fl
 	var difficulty := Tuning.double_row_chance_at(meter)
 	var count := 2 if meter > Tuning.DOUBLE_ROW_START and rng.randf() < difficulty else 1
 	var kind_limit := Kind.CONE if meter < 45.0 else (Kind.FENCE if meter < 105.0 else Kind.TRUCK)
-	var first_kind := -1
+	var forest_route := meter >= Tuning.FOREST_START
+	var lowest := Kind.LOG if forest_route else (Kind.BARREL if harbor else Kind.CRATE)
+	var highest := Kind.LOG_WALL if forest_route else (Kind.DINGHY if harbor else kind_limit)
 	if meter == Tuning.FIRST_ROW:
 		safe = 0
 		closed = [-1, 1]
 		count = 1
 	for slot in range(count):
 		var kind := rng.randi_range(Kind.CRATE, kind_limit)
-		if harbor:
+		if forest_route:
+			var chain := FOREST_COMBO if slot == 0 else FOREST_CROSS
+			kind = chain[posmod(row_number + phase, chain.size())]
+		elif harbor:
 			# Low cargo and marked booms alternate in the adjacent lanes.
 			# The open lane stays within one move of the previous row's exit.
 			var pattern := HARBOR_CHAIN if slot == 0 and meter > 1900.0 else HARBOR_ORDER
 			kind = pattern[posmod(row_number + phase + slot * 3, pattern.size())]
 		elif meter == Tuning.FIRST_ROW:
 			kind = Kind.CRATE
-		var duplicate := int(first_kind == kind)
-		var index_in_pool := row * Kind.size() * 2 + kind * 2 + duplicate
+		while used[kind] >= KIND_CAPACITY:
+			kind = lowest + posmod(kind - lowest + 1, highest - lowest + 1)
+		var index_in_pool := kind * KIND_CAPACITY + used[kind]
+		used[kind] += 1
 		var obstacle := chunk.obstacles[index_in_pool]
 		obstacle.lane = closed[slot]
 		obstacle.meter = meter
 		obstacle.armed = true
 		obstacle.visual.position = Vector3(obstacle.lane * Tuning.LANE, 0, -offset)
 		obstacle.visual.show()
-		first_kind = kind
-	var jump_line := meter > 65.0 and rng.randf() < (0.44 if harbor else 0.29)
+	var jump_line := meter > 65.0 and rng.randf() < (0.58 if forest_route else (0.44 if harbor else 0.29))
 	for slot in range(COINS_PER_ROW):
 		var coin := chunk.coins[row * COINS_PER_ROW + slot]
 		var advance := -7.2 + slot * 1.9 if harbor else -8.65 + slot * 2.45
@@ -412,6 +485,9 @@ func scroll(distance: float, dt: float) -> void:
 				coin.visual.rotation.z = sin(spin * 0.5 + PI) * 0.09
 				if coin.finish_material:
 					coin.finish_material.emission_energy_multiplier = 0.11 + 0.34 * pow(absf(cos(spin)), 12.0)
+
+	if not preview:
+		hearts.scroll(distance, dt, _heart_lane)
 
 
 func check_contacts(previous: float, distance: float, player: MurangPlayer) -> void:
@@ -453,6 +529,8 @@ func check_contacts(previous: float, distance: float, player: MurangPlayer) -> v
 			coin.visual.hide()
 			coin_taken.emit(Vector3(coin.visual.position.x, coin.visual.position.y, 0.0))
 
+	hearts.check_contacts(previous, distance, player)
+
 
 func spawn_lane_at(distance: float) -> int:
 	var available := [0, -1, 1]
@@ -461,3 +539,24 @@ func spawn_lane_at(distance: float) -> int:
 			if obstacle.armed and obstacle.meter >= distance and obstacle.meter < distance + Tuning.HARBOR_ROW_STEP:
 				available.erase(obstacle.lane)
 	return available[0] if not available.is_empty() else 0
+
+
+func _heart_lane(meter: float) -> int:
+	var nearest := 10.0
+	var lane_id := 0
+	for chunk in chunks:
+		for row in range(Tuning.ROWS_PER_CHUNK):
+			var coin := chunk.coins[row * COINS_PER_ROW]
+			if coin.collected:
+				continue
+			var row_meter := coin.meter + (7.2 if coin.meter >= Tuning.HARBOR_START - 7.2 else 8.65)
+			var gap := absf(meter - row_meter)
+			if gap < nearest:
+				nearest = gap
+				lane_id = roundi(coin.visual.position.x / Tuning.LANE)
+	return lane_id
+
+
+func debug_heart(distance: float) -> bool:
+	var meter := distance + 16.0
+	return hearts.spawn_debug(meter, _heart_lane(meter))

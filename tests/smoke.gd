@@ -78,10 +78,25 @@ func _run() -> void:
 	_check(player.elevation > 1.3, "Space jumps")
 	_step(40)
 	_check(is_zero_approx(player.elevation), "Jump returns to the ground")
+	var waist_scale := player.body.scale
+	var mesh_scale := player.head_mesh.scale
 	_key(KEY_DOWN)
-	_step(3)
-	_check(player.height() == MurangPlayer.CROUCH_HEIGHT, "Down key crouches")
-	_step(45)
+	_step(12)
+	_check(is_equal_approx(player.height(), MurangPlayer.CROUCH_HEIGHT), "Down key lowers the collision profile")
+	_check(player.body.rotation.x > 0.95 and player.body.position.y < 0.43
+		and player.knees[1].rotation.x < -0.19, "Slide bends the knees, lowers the waist and leans the torso back")
+	_check(player.model.scale == Vector3.ONE and player.body.scale == waist_scale and player.head_mesh.scale == mesh_scale,
+		"Sliding keeps the authored part scales")
+	var boot := player.knees[0].find_child("HindpawL", true, false) as MeshInstance3D
+	_check(boot.global_position.z < player.body.global_position.z - 0.32, "The lead foot extends in the direction of travel")
+	_key(KEY_D)
+	_step(10)
+	_check(is_equal_approx(player.position.x, Tuning.LANE) and player.slide > 0.0, "Lane steering remains available while sliding")
+	_key(KEY_A)
+	var left: float = player.slide
+	_key(KEY_S)
+	_check(player.slide == left, "A repeated slide press does not latch or refresh the active clip")
+	_step(38)
 	_check(player.height() == MurangPlayer.STAND_HEIGHT, "Slide recovers automatically")
 
 	var touch_center := root.get_visible_rect().size * Vector2(0.5, 0.65)
@@ -96,7 +111,7 @@ func _run() -> void:
 	_check(player.elevation > 0.4, "An up swipe jumps")
 	_step(42)
 	_touch_swipe(touch_center, Vector2(0, 100))
-	_step(5)
+	_step(12)
 	_check(player.height() == MurangPlayer.CROUCH_HEIGHT, "A down swipe crouches")
 
 	_key(KEY_ESCAPE)
@@ -121,6 +136,7 @@ func _run() -> void:
 		player.lane = next.lane
 		player.position.x = next.visual.position.x
 		player.slide = 0.0
+		player.stance = 0.0
 		player.elevation = 0.0
 		player.vertical_speed = 0.0
 		player.immunity = 0.0
@@ -141,10 +157,12 @@ func _run() -> void:
 	_check(game.state == game.State.MENU and game.ui.bank == saved.bank, "Home displays the saved coin total")
 
 	_check_harbor()
+	_check_forest_and_hearts()
+	_check_schedule()
 	_check_patterns(track)
 	_stress(track)
 	if failures.is_empty():
-		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows, seamless 1,500 m boundary, isolated test starts and pooled endurance")
+		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows, seamless 1,500 m and 3,000 m boundaries, four speed tiers, isolated test starts, rare hearts and pooled endurance")
 	game.audio.music.stop()
 	for voice in game.audio.voices:
 		voice.stop()
@@ -181,9 +199,11 @@ func _check_recovery(track: RunnerTrack, player: MurangPlayer) -> void:
 	fixture.kind = RunnerTrack.Kind.BOOM
 	player.elevation = 0.0
 	player.slide = 0.30
+	player.stance = 1.0
 	track.check_contacts(fixture.meter - 0.1, fixture.meter, player)
 	_check(fixture.armed and player.immunity == 0.0, "A slide clears the overhead barrier")
 	player.slide = 0.0
+	player.stance = 0.0
 	var before: int = game.health
 	track.check_contacts(fixture.meter - 1.4, fixture.meter + 1.4, player)
 	_check(game.health == before - 1 and not fixture.armed, "A swept contact catches a fully crossed obstacle")
@@ -217,7 +237,7 @@ func _check_harbor() -> void:
 	game._show_home()
 	var before := RunnerSave.new()
 	before.read_records()
-	game.ui.test_requested.emit()
+	game.ui.test_requested.emit(1)
 	_check(game.test_run and game.distance == Tuning.HARBOR_START and game.district == 1, "Title test action enters the harbor")
 	_check(game.health == 3 and game.coins == 0 and game.ui.score == 0 and game.ui.test_run, "Test starts with clean run totals and full health")
 	_check(is_equal_approx(game.speed, Tuning.speed_at(Tuning.HARBOR_START)), "Direct and normal starts use the same speed curve")
@@ -243,12 +263,114 @@ func _check_harbor() -> void:
 	game._show_home()
 
 
+func _check_forest_and_hearts() -> void:
+	var track: RunnerTrack = game.track
+	var runner: MurangPlayer = game.player
+	game._start()
+	game.ready_remaining = 0.0
+	var before_fov: float = game.camera.fov
+	game._request_debug_heart()
+	_check(track.hearts.debug.meter < 0.0, "Ordinary play cannot force a debug pickup")
+	game.distance = Tuning.FOREST_START - 0.11
+	game.health = 2
+	game.coins = 5
+	game.banked = 5
+	track.reset(611, game.distance)
+	runner.lane = track.spawn_lane_at(game.distance)
+	runner.position.x = runner.lane * Tuning.LANE
+	_step(12)
+	_check(game.state == game.State.RUNNING and game.track == track and game.district == 2 and game.ui.area_time > 0.0, "3,000 m transitions on the live run")
+	_check(game.health == 2 and game.coins >= 5 and game.speed > Tuning.speed_at(2999), "Forest entry retains health, coins and speed")
+	_check(game.camera.fov > before_fov + 3.0 and game.ui.pace >= 0.75 and track.forest != null,
+		"Late-run speed widens the camera and activates the forest")
+	var visible_wind := 0
+	for streak in game.motion_fx.wind:
+		visible_wind += int(streak.visible)
+		_check(not streak.visible or absf(streak.position.x) > 4.7, "World wind remains outside the lanes")
+	_check(visible_wind >= 19, "High speed raises the pooled wind count")
+	for block in track.chunks:
+		if block.index == 83:
+			_check(block.boardwalk[0].visible and not block.forest_floors[0].visible, "The approach keeps the coastal deck")
+			_check(block.forest_floors[1].visible and not block.boardwalk[1].visible, "The 3,000 m tile begins the valley bridge")
+	game._show_home()
+	var before := RunnerSave.new()
+	before.read_records()
+	game.ui.test_requested.emit(2)
+	_check(game.test_run and game.distance == Tuning.FOREST_START and game.health == Tuning.MAX_HEALTH
+		and game.ui.score == 0 and game.coins == 0, "Forest test starts at 3,000 m with full health and clean totals")
+	_check(game.speed == Tuning.speed_at(Tuning.FOREST_START) and game.ui.pace == Tuning.speed_effect(game.speed),
+		"Direct forest tests have the correct speed and effect tier immediately")
+
+	game.health = 2
+	_key(KEY_H)
+	var debug: RunnerHeartPool.Slot = track.hearts.debug
+	var at: float = debug.meter
+	_check(at > game.distance, "H places a pooled heart ahead during a test")
+	game.ui.heart_requested.emit()
+	_check(debug.meter == at, "A second debug request leaves one active debug heart")
+	runner.position.x = debug.lane * Tuning.LANE
+	runner.elevation = 0.0
+	track.hearts.scroll(at, STEP, track._heart_lane)
+	var coins_before: int = game.coins
+	track.hearts.check_contacts(at - 2.1, at + 2.1, runner)
+	_check(game.health == Tuning.MAX_HEALTH and game.ui.heal_time > 0.0 and debug.meter < 0.0,
+		"A swept high-speed pickup heals exactly one heart")
+	_check(game.coins == coins_before, "Healing does not award coins")
+	game.ui.heart_requested.emit()
+	at = debug.meter
+	runner.position.x = debug.lane * Tuning.LANE
+	track.hearts.scroll(at, STEP, track._heart_lane)
+	track.hearts.check_contacts(at - 2.1, at + 2.1, runner)
+	_check(game.health == Tuning.MAX_HEALTH and game.coins == coins_before and debug.meter < 0.0,
+		"A full-health pickup is consumed without bonus health or coins")
+
+	var reduced: bool = game.low_graphics
+	game._toggle_graphics()
+	_check(game.low_graphics != reduced and game.motion_fx.performance_mode == game.low_graphics
+		and game.sunlight.shadow_enabled != game.low_graphics, "Graphics switch updates particles, trails and shadows")
+	var settings := ConfigFile.new()
+	_check(settings.load(game.DISPLAY_CONFIG) == OK and settings.get_value("graphics", "low") == game.low_graphics,
+		"Graphics settings persist separately from records")
+	game._toggle_graphics()
+	game._show_home()
+	var after := RunnerSave.new()
+	after.read_records()
+	_check(after.best == before.best and after.bank == before.bank and after.furthest == before.furthest,
+		"Forest test and recovery leave ordinary records intact")
+
+
+func _check_schedule() -> void:
+	var schedule := RunnerHeartSchedule.new()
+	var eligible := 0
+	var spawns := 0
+	for run_seed in range(100):
+		schedule.reset(run_seed, 0.0)
+		_check(schedule.advance(499.9) == -1, "No hearts below 500 m")
+		var last := -Tuning.HEART_COOLDOWN
+		for meter in range(500, 19001, 100):
+			var available := meter - last >= Tuning.HEART_COOLDOWN
+			eligible += int(available)
+			var spawn := schedule.advance(meter)
+			if spawn >= 0:
+				_check(spawn == meter and available, "Heart spawns honor the exact 100 m roll and 800 m cooldown")
+				last = meter
+				spawns += 1
+			_check(schedule.advance(meter) == -1, "An already evaluated marker cannot spawn twice")
+		var replay := RunnerHeartSchedule.new()
+		replay.reset(run_seed, 19000.0)
+		_check(schedule.last_meter == replay.last_meter and schedule.advance(19100.0) == replay.advance(19100.0),
+			"A direct start preserves the seed and heart cooldown from prior course markers")
+	var rate := float(spawns) / eligible
+	_check(absf(rate - Tuning.HEART_CHANCE) <= 0.015, "Eligible heart rolls stay close to 10 percent")
+	print("Heart schedule: %d/%d eligible rolls (%.2f%%), 100 seeds" % [spawns, eligible, 100.0 * rate])
+
+
 func _check_patterns(track: RunnerTrack) -> void:
 	for seed_id in range(12):
 		track.reset(seed_id)
 		var last_safe := 0
 		var last_row := Tuning.FIRST_ROW - Tuning.ROW_STEP
-		for chunk_index in range(67):
+		for chunk_index in range(124):
 			track.scroll(chunk_index * Tuning.CHUNK_LENGTH, 0.0)
 			for chunk in track.chunks:
 				if chunk.index != chunk_index:
@@ -263,8 +385,8 @@ func _check_patterns(track: RunnerTrack) -> void:
 					for obstacle in chunk.obstacles:
 						if obstacle.armed and is_equal_approx(obstacle.meter, row_meter):
 							blocked += 1
-							var from_harbor := obstacle.kind >= RunnerTrack.Kind.BARREL
-							_check(from_harbor == (row_meter >= Tuning.HARBOR_START), "Uses the correct obstacle kit")
+							var kit := 2 if obstacle.kind >= RunnerTrack.Kind.LOG else (1 if obstacle.kind >= RunnerTrack.Kind.BARREL else 0)
+							_check(kit == Tuning.district_at(row_meter), "Uses the correct obstacle kit")
 							_check(obstacle.lane != safe, "Coin guidance denotes an open lane")
 					_check(blocked >= 1 and blocked <= 2, "Every occupied row leaves an open lane")
 					_check(abs(safe - last_safe) <= 1, "A safe path needs no double lane change")
@@ -273,7 +395,7 @@ func _check_patterns(track: RunnerTrack) -> void:
 					_check(gap / Tuning.speed_at(row_meter) > Tuning.LANE / Tuning.LANE_SPEED + 0.13, "Reaction and lane-change budget remains at maximum speed")
 					last_safe = safe
 					last_row = row_meter
-	_check(Tuning.speed_at(3500) == Tuning.MAX_SPEED and Tuning.speed_at(1501) < Tuning.speed_at(2700) and Tuning.speed_at(0) == Tuning.START_SPEED, "Difficulty ramps to the speed cap")
+	_check(Tuning.speed_at(4000) == Tuning.MAX_SPEED and Tuning.speed_at(1501) < Tuning.speed_at(2700) and Tuning.speed_at(0) == Tuning.START_SPEED, "Difficulty ramps to the speed cap")
 
 
 func _stress(track: RunnerTrack) -> void:
@@ -285,5 +407,5 @@ func _stress(track: RunnerTrack) -> void:
 		simulated_distance += STEP * Tuning.speed_at(simulated_distance)
 		track.scroll(simulated_distance, STEP)
 	_check(get_node_count() == nodes, "Twelve simulated minutes do not increase the node count")
-	_check(track.chunks.size() == Tuning.CHUNK_COUNT and track.total_reuses > 400, "Track continuously recycles its fixed-size pool")
+	_check(track.chunks.size() == Tuning.CHUNK_COUNT and track.total_reuses > 510, "Track continuously recycles its fixed-size pool")
 	print("Pool endurance: %.0f m, %d reuses, %d ms CPU test" % [simulated_distance, track.total_reuses, Time.get_ticks_msec() - started])

@@ -2,7 +2,9 @@ class_name RunnerUI
 extends Control
 
 signal start_requested
-signal test_requested
+signal test_requested(district_id: int)
+signal heart_requested
+signal graphics_requested
 signal replay_requested
 signal pause_requested
 signal resume_requested
@@ -34,6 +36,7 @@ const TROPHY := preload("res://assets/ui/lucide/trophy.png")
 const COIN := preload("res://assets/ui/lucide/coins.png")
 const WALK := preload("res://assets/ui/lucide/route.png")
 const WAVES := preload("res://assets/ui/lucide/sailboat.png")
+const FOREST_ICON := preload("res://assets/ui/lucide/trees.png")
 const SOUND := preload("res://assets/ui/lucide/volume-2.png")
 const SILENT := preload("res://assets/ui/lucide/volume-x.png")
 const PLAY := preload("res://assets/ui/lucide/play.png")
@@ -57,9 +60,19 @@ var bank := 0
 var score := 0
 var meters := 0
 var coins := 0
-var hearts := 3
+var hearts := Tuning.MAX_HEALTH
 var district := 0
 var pace := 0.0
+var speed := Tuning.START_SPEED
+var speed_label: Label
+var heat: ColorRect
+var low_graphics := false
+var heal_label: Label
+var heal_time := 0.0
+var heal_index := -1
+var heal_origin := Vector2.ZERO
+var announcement_icon: TextureRect
+var announcement_label: Label
 var pulse := 0.0
 var run_clock := 0.0
 var coin_pulse := 0.0
@@ -77,23 +90,27 @@ class SpeedStreaks extends Control:
 	var strength := 0.0
 	var flash := 0.0
 	var clock := 0.0
+	var limited := false
 
 	func _draw() -> void:
 		if flash > 0.0:
 			var tint := Color(0.98, 0.25, 0.29, flash * 0.24)
 			draw_rect(Rect2(Vector2.ZERO, Vector2(size.x, size.y * 0.029)), tint)
 			draw_rect(Rect2(Vector2(0, size.y * 0.971), Vector2(size.x, size.y * 0.029)), tint)
-		if strength <= 0.0:
+		if strength < 0.19:
 			return
 		var center := size * Vector2(0.5, 0.43)
-		for i in range(26):
+		var count := 8 + int(24.0 * strength)
+		if limited:
+			count = mini(count, 9)
+		for i in count:
 			var direction := -1.0 if i % 2 == 0 else 1.0
-			var flow := fposmod(clock * (1.7 + i * 0.021) + i * 0.376, 1.0)
-			var y := 0.13 + fposmod(i * 0.178, 0.79)
-			var rim := Vector2(size.x * (0.5 + direction * (0.36 + flow * 0.165)), y * size.y)
-			var line := (rim - center).normalized() * (15 + flow * 64)
-			var tint := Color(0.92, 1.0, 0.99, strength * sin(flow * PI) * 0.48)
-			draw_line(rim - line, rim, tint, 1.7, true)
+			var flow := fposmod(clock * (0.90 + strength * 1.93 + i * 0.021) + i * 0.376, 1.0)
+			var y := 0.14 + fposmod(i * 0.178, 0.76)
+			var rim := Vector2(size.x * (0.5 + direction * (0.383 + flow * 0.125)), y * size.y)
+			var line := (rim - center).normalized() * (12.0 + strength * (29.0 + flow * 103.0))
+			var tint := Color(0.83, 0.95, 1.0, strength * sin(flow * PI) * (0.32 if limited else 0.63))
+			draw_line(rim - line, rim, tint, 0.9 + 1.55 * strength, true)
 
 
 class RecordGlints extends Control:
@@ -142,6 +159,7 @@ func _process(dt: float) -> void:
 	effects.strength = pace if screen == Screen.HUD else 0.0
 	effects.flash = pulse if screen == Screen.HUD else 0.0
 	effects.clock = run_clock
+	effects.limited = low_graphics
 	effects.queue_redraw()
 	if is_instance_valid(hero):
 		hero.position.y = hero_origin.y + sin(run_clock * 2.1) * 6.0
@@ -157,6 +175,23 @@ func _process(dt: float) -> void:
 	coins_label.modulate = Color.WHITE.lerp(MINT, coin_pulse)
 	area_time = maxf(area_time - dt, 0)
 	_sync_announcement()
+	speed_label.text = "%.1f m/s" % speed
+	heat.size.x = 117.0 * pace
+	heat.color = MINT.lerp(GOLD, smoothstep(0.46, 1.0, pace))
+	heal_time = maxf(0.0, heal_time - dt)
+	if heal_label:
+		heal_label.visible = heal_time > 0.0
+		heal_label.position = heal_origin - Vector2(0, (1.1 - heal_time) * 15.0)
+		heal_label.modulate.a = smoothstep(0.0, 0.34, heal_time)
+	if heal_index >= 0 and heal_index < heart_icons.size():
+		heart_icons[heal_index].scale = Vector2.ONE * (1.0 + sin((1.1 - heal_time) * 9.2) * heal_time * 0.33)
+
+
+func show_heal(index: int) -> void:
+	if heal_index >= 0 and heal_index < heart_icons.size():
+		heart_icons[heal_index].scale = Vector2.ONE
+	heal_index = index
+	heal_time = 1.1
 
 
 func show_screen(target: Screen) -> void:
@@ -179,9 +214,20 @@ func set_district(next: int, announce: bool) -> void:
 	area_time = 3.1 if announce else 0.0
 	if screen == Screen.HUD and is_instance_valid(area_label):
 		area_label.text = Tuning.DISTRICTS[district].name
-		area_icon.texture = PIN if district == 0 else WAVES
-		area_icon.modulate = MINT if district == 0 else GOLD
+		area_icon.texture = _district_icon()
+		area_icon.modulate = _district_tint()
+		announcement_icon.texture = _district_icon()
+		announcement_icon.modulate = _district_tint()
+		announcement_label.text = "%s 진입" % Tuning.DISTRICTS[district].name
 		_sync_announcement()
+
+
+func _district_icon() -> Texture2D:
+	return [PIN, WAVES, FOREST_ICON][district]
+
+
+func _district_tint() -> Color:
+	return [MINT, GOLD, Color("#bde991")][district]
 
 
 func _sync_announcement() -> void:
@@ -228,6 +274,7 @@ func _layout() -> void:
 		child.queue_free()
 	hero = null
 	announcement = null
+	heal_label = null
 	heart_icons.clear()
 	portrait = size.x < size.y * 0.98
 	var fitting := minf(size.x / 670.0, size.y / 1050.0) if portrait else minf(size.x / 1060.0, size.y / 710.0)
@@ -343,7 +390,7 @@ func _title() -> void:
 		y = 49.0 + maxf(0.0, units.y - 1080.0) * 0.36
 		stats_y = y + 520.0
 		_panel(Rect2(x - 34, y - 25, width + 68, 955), Color(1, 0.985, 0.94, 0.96), 37, Color("#c6e3d9"), 2, 13)
-		hero = _icon(HERO, Vector2(x + 56, y + 188), 360)
+		hero = _icon(HERO, Vector2(x + 72, y + 189), 328)
 		hero_origin = hero.position
 	else:
 		_panel(Rect2(x - 24, y - 20, width + 48, 615), Color(1, 0.988, 0.945, 0.976), 34, Color("#cfecdd"), 2, 12)
@@ -356,13 +403,14 @@ func _title() -> void:
 		hero = _icon(HERO, Vector2(art_x, art_y), art_size)
 		hero_origin = hero.position
 
-	_panel(Rect2(x, y, 133, 32), PALE, 16)
-	_icon(PIN, Vector2(x + 9, y + 7), 18, Color("#137c70"))
-	_text("시티 파크", Rect2(x + 36, y + 1, 96, 30), 18)
-	_panel(Rect2(x + 143, y, 151, 32), Color("#ffe8d7"), 16)
-	_icon(WAVES, Vector2(x + 154, y + 7), 18, Color("#963e39"))
-	_text("산호빛 항구", Rect2(x + 182, y + 1, 112, 30), 18)
-	_text("v0.2", Rect2(x + 398, y, 72, 31), 18, SUBTLE, DISPLAY, HORIZONTAL_ALIGNMENT_RIGHT)
+	var colors := [PALE, Color("#ffe8d7"), Color("#e3f0cc")]
+	var icons := [PIN, WAVES, FOREST_ICON]
+	for route in Tuning.DISTRICTS.size():
+		var at := x + route * 128
+		_panel(Rect2(at, y, 120, 32), colors[route], 16)
+		_icon(icons[route], Vector2(at + 8, y + 7), 18, Color("#197a67"))
+		_text(Tuning.DISTRICTS[route].name, Rect2(at + 31, y + 1, 88, 30), 17)
+	_text("v0.3", Rect2(x + 398, y, 72, 31), 18, SUBTLE, DISPLAY, HORIZONTAL_ALIGNMENT_RIGHT)
 	var title := _text("무랑 런", Rect2(x - 3, y + 45, width, 105), 98 if not portrait else 92)
 	title.add_theme_constant_override("outline_size", 5)
 	title.add_theme_color_override("font_outline_color", INK)
@@ -375,12 +423,26 @@ func _title() -> void:
 	_icon(PLAY, Vector2(x + 21, by + 18), 24, INK)
 	var controls_y := by + 74.0
 	if Tuning.ENABLE_DISTRICT_TEST:
-		_button("신규 맵 테스트  ·  %sm" % format_number(int(Tuning.DISTRICTS[Tuning.TEST_DISTRICT].start)), Rect2(x, controls_y, width, 55), func(): test_requested.emit(), false, 23)
-		_icon(WAVES, Vector2(x + 21, controls_y + 15), 23, Color("#137c70"))
-		controls_y += 66.0
-	_button("조작 방법", Rect2(x, controls_y, 353, 50), func(): show_screen(Screen.HELP), false, 22)
-	_button("", Rect2(x + 369, controls_y, 103, 50), func(): mute_requested.emit())
-	_icon(SILENT if muted else SOUND, Vector2(x + 407, controls_y + 13), 24, INK)
+		var test_labels := ["해변 맵 테스트", "신규 숲 맵 테스트"]
+		for i in range(2):
+			var id := i + 1
+			var test_at := format_number(int(Tuning.DISTRICTS[id].start))
+			var rect := Rect2(x + i * 244.0, controls_y, 228, 61 if portrait else 55)
+			var press_test := func(): test_requested.emit(id)
+			if portrait:
+				_button("", rect, press_test)
+				_text(test_labels[i], Rect2(rect.position + Vector2(0, 4), Vector2(228, 29)),
+					22, INK, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
+				_text("%s m" % test_at, Rect2(rect.position + Vector2(0, 31), Vector2(228, 22)),
+					18, SUBTLE, BOLD, HORIZONTAL_ALIGNMENT_CENTER)
+			else:
+				_button("%s · %sm" % [test_labels[i], test_at], rect, press_test, false, 18)
+		controls_y += 72.0 if portrait else 66.0
+	_button("조작 방법", Rect2(x, controls_y, 193, 50), func(): show_screen(Screen.HELP), false, 21)
+	_button("그래픽 낮음" if low_graphics else "그래픽 표준",
+		Rect2(x + 202, controls_y, 177, 50), func(): graphics_requested.emit(), false, 20)
+	_button("", Rect2(x + 388, controls_y, 84, 50), func(): mute_requested.emit())
+	_icon(SILENT if muted else SOUND, Vector2(x + 418, controls_y + 13), 24, INK)
 
 
 func _metric(caption: String, value: String, rect: Rect2, texture: Texture2D, accent: Color, animate := false) -> Label:
@@ -422,7 +484,7 @@ func _hud() -> void:
 	meters_label = _metric("거리", "%s m" % format_number(meters), Rect2(left + card + 7, top, card, 65), WALK, MINT)
 	coins_label = _metric("코인", format_number(coins), Rect2(left + (card + 7) * 2.0, top, card, 65), COIN, GOLD, true)
 	_panel(Rect2(w - 165, top + 3, 91, 56), NAVY, 17, EDGE, 2)
-	for n in range(3):
+	for n in range(Tuning.MAX_HEALTH):
 		heart_icons.append(_icon(HEART, Vector2(w - 157 + n * 24, top + 20), 21,
 			CORAL if n < hearts else Color("#668090")))
 	var pause_at := Vector2(w - 66, top + 3)
@@ -430,19 +492,39 @@ func _hud() -> void:
 	_icon(PAUSE, pause_at + Vector2(13, 17), 22, INK)
 	var area_y := top + 75.0
 	_panel(Rect2(left, area_y, 157, 37), NAVY, 16, EDGE, 2)
-	area_icon = _icon(PIN if district == 0 else WAVES, Vector2(left + 12, area_y + 8), 21, MINT if district == 0 else GOLD)
+	area_icon = _icon(_district_icon(), Vector2(left + 12, area_y + 8), 21, _district_tint())
 	area_label = _text(Tuning.DISTRICTS[district].name, Rect2(left + 42, area_y, 114, 36), 19, PAPER)
 	if test_run:
 		_panel(Rect2(left + 167, area_y, 119, 37), GOLD, 16)
 		_text("TEST MODE", Rect2(left + 167, area_y, 119, 36), 17, INK, BOLD, HORIZONTAL_ALIGNMENT_CENTER)
+	var speed_x := w - 163.0
+	_panel(Rect2(speed_x, area_y, 141, 45), NAVY, 15, EDGE, 2)
+	speed_label = _text("%.1f m/s" % speed, Rect2(speed_x + 13, area_y + 2, 115, 27), 22, PAPER, BOLD,
+		HORIZONTAL_ALIGNMENT_CENTER)
+	_panel(Rect2(speed_x + 12, area_y + 33, 117, 4), EDGE, 2)
+	heat = ColorRect.new()
+	heat.position = Vector2(speed_x + 12, area_y + 33)
+	heat.size = Vector2(117 * pace, 4)
+	heat.mouse_filter = MOUSE_FILTER_IGNORE
+	panels.add_child(heat)
+	heal_origin = Vector2(speed_x - 2, area_y + 48)
+	heal_label = _text("HP +1", Rect2(heal_origin, Vector2(141, 39)), 27, Color("#ff8eac"), BOLD,
+		HORIZONTAL_ALIGNMENT_CENTER)
+	heal_label.add_theme_color_override("font_outline_color", NAVY)
+	heal_label.add_theme_constant_override("outline_size", 7)
+	heal_label.visible = heal_time > 0.0
+	if test_run:
+		_button("하트 생성 · H", Rect2(w - 197, units.y - 70, 175, 46),
+			func(): heart_requested.emit(), false, 20)
 	announcement = Control.new()
 	announcement.mouse_filter = MOUSE_FILTER_IGNORE
 	panels.add_child(announcement)
-	var banner_y := area_y + (51 if portrait else 3)
+	var banner_y := area_y + (58 if portrait else 3)
 	var banner_x := w * 0.5 - 172.0
 	_panel(Rect2(banner_x, banner_y, 344, 52), NAVY, 16, GOLD, 2, 6, announcement)
-	_icon(WAVES, Vector2(banner_x + 20, banner_y + 15), 22, GOLD, announcement)
-	_text("산호빛 항구 진입", Rect2(banner_x + 56, banner_y, 276, 50), 24, PAPER, KOREAN, HORIZONTAL_ALIGNMENT_LEFT, announcement)
+	announcement_icon = _icon(_district_icon(), Vector2(banner_x + 20, banner_y + 15), 22, _district_tint(), announcement)
+	announcement_label = _text("%s 진입" % Tuning.DISTRICTS[district].name,
+		Rect2(banner_x + 56, banner_y, 276, 50), 24, PAPER, KOREAN, HORIZONTAL_ALIGNMENT_LEFT, announcement)
 	_sync_announcement()
 
 
@@ -476,10 +558,12 @@ func _help() -> void:
 
 func _paused() -> void:
 	var caption: String = "TEST MODE" if test_run else Tuning.DISTRICTS[district].name
-	var at := _dialog(307, "일시정지", caption)
+	var at := _dialog(371, "일시정지", caption)
 	_button("계속 달리기", Rect2(at + Vector2(28, 145), Vector2(474, 58)), func(): resume_requested.emit(), true)
 	_button("소리 끔" if muted else "소리 켬", Rect2(at + Vector2(28, 220), Vector2(230, 53)), func(): mute_requested.emit(), false, 22)
-	_button("메인 화면", Rect2(at + Vector2(273, 220), Vector2(229, 53)), func(): home_requested.emit(), false, 22)
+	_button("그래픽 낮음" if low_graphics else "그래픽 표준",
+		Rect2(at + Vector2(273, 220), Vector2(229, 53)), func(): graphics_requested.emit(), false, 22)
+	_button("메인 화면", Rect2(at + Vector2(28, 285), Vector2(474, 53)), func(): home_requested.emit(), false, 22)
 
 
 func _over() -> void:

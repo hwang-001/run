@@ -4,11 +4,14 @@ enum State { MENU, RUNNING, PAUSED, FINISHED }
 
 const SKY := preload("res://assets/park/kloofendal-sky.webp")
 const HARBOR_SKY := preload("res://assets/coast/qwantani-sky.webp")
+const FOREST_SKY := preload("res://assets/forest/misty-sky.webp")
 const SKY_SHADER := preload("res://scripts/route_sky.gdshader")
-const MENU_MILE := Tuning.HARBOR_START + 4.0
+const MENU_MILE := Tuning.FOREST_START + 7.0
+const DISPLAY_CONFIG := "user://display.cfg"
+const HEALTH_COLOR := Color("#ff7f9e")
+const GROUND_COLORS := [Color("#dbd5be"), Color("#ffe4bc"), Color("#d9bd8d")]
 const REWARD_COLOR := Color("#ffe27a")
 const HIT_COLOR := Color("#ff667b")
-const DUST_COLOR := Color("#fff1d5")
 const SAVE_INTERVAL := 2.0
 
 var state := State.MENU
@@ -25,7 +28,13 @@ var surf_particles: CPUParticles3D
 var environment: Environment
 var sunlight: DirectionalLight3D
 var sky_mix: ShaderMaterial
-var scene_mix := -1.0
+var scene_mix := Vector3(-1, -1, -1)
+var motion_fx: RunnerMotionFX
+var low_graphics := false
+var landing_kick := 0.0
+var camera_roll := 0.0
+var skid_puffs_in := 0.0
+var ground_steps := 0
 var district := 0
 var start_district := 0
 var start_meter := 0.0
@@ -36,7 +45,7 @@ var distance := 0.0
 var speed := Tuning.START_SPEED
 var coins := 0
 var banked := 0
-var health := 3
+var health := Tuning.MAX_HEALTH
 var start_best := 0
 var shake := 0.0
 var clock := 0.0
@@ -57,11 +66,16 @@ func _ready() -> void:
 	track.reset(2, MENU_MILE, true)
 	track.coin_taken.connect(_on_coin)
 	track.obstacle_hit.connect(_on_hit)
+	track.heart_taken.connect(_on_heart)
 	player = MurangPlayer.new()
 	add_child(player)
 	player.hide()
 	player.jumped.connect(_on_jump)
 	player.landed.connect(_on_land)
+	player.slide_started.connect(_on_slide)
+	motion_fx = RunnerMotionFX.new()
+	add_child(motion_fx)
+	motion_fx.setup(player)
 	camera = Camera3D.new()
 	camera.current = true
 	camera.near = 0.14
@@ -72,14 +86,20 @@ func _ready() -> void:
 	audio = RunnerAudio.new()
 	add_child(audio)
 	records.read_records()
+	var preferences := ConfigFile.new()
+	if preferences.load(DISPLAY_CONFIG) == OK:
+		low_graphics = bool(preferences.get_value("graphics", "low", false))
 	var canvas := CanvasLayer.new()
 	add_child(canvas)
 	ui = RunnerUI.new()
 	ui.best = records.best
 	ui.bank = records.bank
+	ui.low_graphics = low_graphics
 	canvas.add_child(ui)
 	ui.start_requested.connect(_start)
-	ui.test_requested.connect(func(): _start(Tuning.TEST_DISTRICT))
+	ui.test_requested.connect(_start)
+	ui.heart_requested.connect(_request_debug_heart)
+	ui.graphics_requested.connect(_toggle_graphics)
 	ui.replay_requested.connect(_restart)
 	ui.pause_requested.connect(_pause)
 	ui.resume_requested.connect(_resume)
@@ -87,7 +107,7 @@ func _ready() -> void:
 	ui.mute_requested.connect(_toggle_audio)
 	get_viewport().size_changed.connect(_check_viewport)
 	_check_viewport()
-	_update_atmosphere(1.0)
+	_update_atmosphere(Tuning.scenery_weights(MENU_MILE))
 	_camera_step(1.0)
 
 
@@ -103,6 +123,7 @@ func _make_lighting() -> void:
 	sky_mix.shader = SKY_SHADER
 	sky_mix.set_shader_parameter("park_panorama", SKY)
 	sky_mix.set_shader_parameter("harbor_panorama", HARBOR_SKY)
+	sky_mix.set_shader_parameter("forest_panorama", FOREST_SKY)
 	daylight.sky_material = sky_mix
 	atmosphere.sky = daylight
 	atmosphere.sky_rotation.y = 0.8
@@ -193,12 +214,16 @@ func _make_particles() -> void:
 	add_child(surf_particles)
 
 
-func _emit_burst(at: Vector3, tint: Color, dust := false) -> void:
+func _emit_burst(at: Vector3, tint: Color, dust := false, force := 1.0) -> void:
 	var puffs := bursts[burst_index]
 	burst_index = (burst_index + 1) % bursts.size()
 	puffs.position = at
 	puffs.mesh = dust_mesh if dust else spark_mesh
-	puffs.spread = 85.0 if dust else 48.0
+	puffs.scale_amount_max = 1.24 * force
+	puffs.initial_velocity_max = 4.0 * force
+	puffs.spread = 48.0 if dust else 52.0
+	puffs.direction = Vector3(0, 0.36, 1.0) if dust else Vector3.UP
+	puffs.lifetime = 0.32 if dust else 0.49
 	(puffs.material_override as StandardMaterial3D).albedo_color = tint
 	puffs.restart()
 
@@ -206,14 +231,31 @@ func _emit_burst(at: Vector3, tint: Color, dust := false) -> void:
 func _check_viewport() -> void:
 	var viewport_size := get_viewport().get_visible_rect().size
 	portrait_view = viewport_size.x < viewport_size.y * 0.98
-	if OS.has_feature("web"):
-		get_viewport().scaling_3d_scale = 0.83 if portrait_view else 1.0
+	var baseline := 0.83 if OS.has_feature("web") and portrait_view else 1.0
+	get_viewport().scaling_3d_scale = minf(baseline, 0.73) if low_graphics else baseline
 	sunlight.directional_shadow_max_distance = 32.0 if portrait_view else 48.0
+	sunlight.shadow_enabled = not low_graphics
+	motion_fx.performance_mode = low_graphics
+	track.hearts.performance_mode = low_graphics
+	for puffs in bursts:
+		puffs.amount = 6 if low_graphics else 11
+
+
+func _toggle_graphics() -> void:
+	low_graphics = not low_graphics
+	var config := ConfigFile.new()
+	config.set_value("graphics", "low", low_graphics)
+	if config.save(DISPLAY_CONFIG) != OK:
+		push_warning("Could not save the graphics preference.")
+	ui.low_graphics = low_graphics
+	audio.play_sound(&"click")
+	_check_viewport()
+	surf_particles.emitting = scene_mix.y > 0.39 and not low_graphics
+	ui.show_screen(ui.screen)
 
 
 func _start(requested_district := 0) -> void:
 	audio.play_sound(&"click")
-	audio.start_music()
 	start_district = clampi(requested_district, 0, Tuning.DISTRICTS.size() - 1) if Tuning.ENABLE_DISTRICT_TEST else 0
 	test_run = start_district > 0
 	start_meter = float(Tuning.DISTRICTS[start_district].start)
@@ -222,7 +264,7 @@ func _start(requested_district := 0) -> void:
 	district = Tuning.district_at(distance)
 	coins = 0
 	banked = 0
-	health = 3
+	health = Tuning.MAX_HEALTH
 	start_best = records.best
 	shake = 0.0
 	finish_timer = 0.0
@@ -230,20 +272,29 @@ func _start(requested_district := 0) -> void:
 	save_in = SAVE_INTERVAL
 	last_ui_score = -1
 	steps_in = 0.0
-	ui.pace = 0.0
+	ui.pace = Tuning.speed_effect(speed)
+	ui.speed = speed
+	ui.heal_time = 0.0
 	ui.pulse = 0.0
 	swipe_id = -1
+	landing_kick = 0.0
+	camera_roll = 0.0
+	skid_puffs_in = 0.0
+	ground_steps = 0
+	motion_fx.reset()
 	player.reset()
 	player.show()
 	track.reset(randi() & 0x7ffffff, distance)
 	if test_run:
 		player.lane = track.spawn_lane_at(distance)
 		player.position.x = player.lane * Tuning.LANE
-	_update_atmosphere(Tuning.coast_mix_at(distance))
+	_update_atmosphere(Tuning.scenery_weights(distance))
+	audio.start_music()
+	audio.set_wind(ui.pace)
 	state = State.RUNNING
 	ui.test_run = test_run
 	ui.set_district(district, test_run)
-	ui.update_values(0, int(distance), 0, 3)
+	ui.update_values(0, int(distance), 0, Tuning.MAX_HEALTH)
 	ui.show_screen(RunnerUI.Screen.HUD)
 
 
@@ -255,22 +306,24 @@ func _session_score() -> int:
 	return Tuning.points(distance - start_meter, coins)
 
 
-func _update_atmosphere(blend: float) -> void:
-	# Quantization bounds skymap refreshes while the coast lighting changes.
-	blend = snappedf(blend, 1.0 / 48.0)
-	if is_equal_approx(scene_mix, blend):
+func _update_atmosphere(weights: Vector3) -> void:
+	# Update the panorama in bounded steps. The road and input keep moving.
+	var harbor := snappedf(weights.y, 1.0 / 48.0)
+	var forest := snappedf(weights.z, 1.0 / 48.0)
+	var mix := Vector3(maxf(0.0, 1.0 - harbor - forest), harbor, forest)
+	if scene_mix.is_equal_approx(mix):
 		return
-	scene_mix = blend
-	sky_mix.set_shader_parameter("harbor", blend)
-	environment.ambient_light_color = Color("#d9eaf5").lerp(Color("#f1d7c5"), blend)
-	environment.ambient_light_energy = lerpf(0.41, 0.40, blend)
-	environment.fog_light_color = Color("#c5e5f0").lerp(Color("#edc6a6"), blend)
-	environment.fog_density = lerpf(0.0086, 0.0067, blend)
-	sunlight.light_color = Color("#fff0d8").lerp(Color("#ffd0a3"), blend)
-	sunlight.light_energy = lerpf(0.58, 0.65, blend)
-	sunlight.rotation_degrees = Vector3(-56, -36, 0).lerp(Vector3(-31, -55, 0), blend)
-	audio.set_coast(blend)
-	surf_particles.emitting = blend > 0.39
+	scene_mix = mix
+	sky_mix.set_shader_parameter("districts", mix)
+	environment.ambient_light_color = Color("#d9eaf5").lerp(Color("#f1d7c5"), harbor).lerp(Color("#cfded3"), forest)
+	environment.ambient_light_energy = 0.41 - 0.01 * harbor + 0.025 * forest
+	environment.fog_light_color = Color("#c5e5f0").lerp(Color("#edc6a6"), harbor).lerp(Color("#9ebdb3"), forest)
+	environment.fog_density = 0.0086 - 0.0019 * harbor + 0.0023 * forest
+	sunlight.light_color = Color("#fff0d8").lerp(Color("#ffd0a3"), harbor).lerp(Color("#fff1d2"), forest)
+	sunlight.light_energy = 0.58 + 0.07 * harbor + 0.015 * forest
+	sunlight.rotation_degrees = Vector3(-56, -36, 0).lerp(Vector3(-31, -55, 0), harbor).lerp(Vector3(-43, -51, 0), forest)
+	audio.set_scenery(mix)
+	surf_particles.emitting = harbor > 0.39 and not low_graphics
 
 
 func _show_home() -> void:
@@ -279,9 +332,11 @@ func _show_home() -> void:
 	audio.play_sound(&"click")
 	player.reset()
 	player.hide()
+	motion_fx.reset()
+	audio.set_wind(0.0)
 	track.reset(2, MENU_MILE, true)
 	preview_meter = MENU_MILE
-	_update_atmosphere(1.0)
+	_update_atmosphere(Tuning.scenery_weights(MENU_MILE))
 	distance = 0.0
 	state = State.MENU
 	swipe_id = -1
@@ -292,6 +347,7 @@ func _pause() -> void:
 	if state != State.RUNNING:
 		return
 	state = State.PAUSED
+	audio.set_wind(0.0)
 	swipe_id = -1
 	_save_progress()
 	audio.play_sound(&"click")
@@ -316,6 +372,8 @@ func _toggle_audio() -> void:
 
 func _finish() -> void:
 	state = State.FINISHED
+	motion_fx.reset()
+	audio.set_wind(0.0)
 	finish_timer = 0.46
 	swipe_id = -1
 	ui.new_best = not test_run and _session_score() > start_best
@@ -359,6 +417,7 @@ func _input(event: InputEvent) -> void:
 			match key:
 				KEY_A, KEY_LEFT: player.steer(-1)
 				KEY_D, KEY_RIGHT: player.steer(1)
+				KEY_H: _request_debug_heart()
 				KEY_SPACE, KEY_W, KEY_UP:
 					ready_remaining = 0.0
 					player.jump()
@@ -401,13 +460,39 @@ func _apply_swipe(at: Vector2) -> bool:
 	return true
 
 
+func _request_debug_heart() -> void:
+	if state != State.RUNNING or not test_run or not Tuning.ENABLE_DISTRICT_TEST:
+		return
+	if track.debug_heart(distance):
+		audio.play_sound(&"click")
+
+
+func _on_heart(at: Vector3) -> void:
+	if state != State.RUNNING or health >= Tuning.MAX_HEALTH:
+		return
+	health += 1
+	_emit_burst(at, HEALTH_COLOR, false, 1.36)
+	_emit_burst(player.position + Vector3(0, 0.71, 0), Color("#ffbccc"))
+	audio.play_sound(&"health", -8.0)
+	ui.update_values(_session_score(), int(distance), coins, health)
+	ui.show_heal(health - 1)
+
+
 func _on_jump() -> void:
+	if ui.pace > 0.39:
+		_emit_burst(player.position + Vector3(0, 0.1, 0.18), GROUND_COLORS[district], true, 0.9 + ui.pace * 0.4)
 	audio.play_sound(&"jump", -12.0)
 
 
 func _on_land() -> void:
-	_emit_burst(player.position + Vector3(0, 0.09, 0.24), DUST_COLOR, true)
+	landing_kick = 0.18
+	_emit_burst(player.position + Vector3(0, 0.09, 0.24), GROUND_COLORS[district], true, 0.88 + ui.pace * 0.42)
 	audio.play_sound(&"land", -15.0)
+
+
+func _on_slide() -> void:
+	skid_puffs_in = 0.0
+	audio.play_sound(&"slide", lerpf(-17.0, -8.0, ui.pace), lerpf(0.78, 1.28, ui.pace))
 
 
 func _on_coin(at: Vector3) -> void:
@@ -438,6 +523,7 @@ func _physics_process(dt: float) -> void:
 		if ready_remaining > 0.0:
 			ready_remaining -= dt
 			player.step(dt, 0.0, false, false)
+			motion_fx.step(dt, speed, ui.pace, district, player)
 			_camera_step(dt)
 			return
 		var previous := distance
@@ -447,15 +533,26 @@ func _physics_process(dt: float) -> void:
 		if district != next:
 			district = next
 			ui.set_district(district, true)
-		_update_atmosphere(Tuning.coast_mix_at(distance))
+		_update_atmosphere(Tuning.scenery_weights(distance))
+		ui.pace = Tuning.speed_effect(speed)
+		ui.speed = speed
+		audio.set_wind(ui.pace)
 		player.step(dt, speed, true, false)
+		motion_fx.step(dt, speed, ui.pace, district, player)
 		track.scroll(distance, dt)
 		track.check_contacts(previous, distance, player)
 		steps_in -= dt
 		if steps_in <= 0.0 and player.elevation < 0.025 and player.slide <= 0.0:
 			steps_in = 1.0 / (5.4 + speed * 0.15)
-			audio.play_sound(&"step", -30.0, 0.93 + 0.07 * sin(clock * 17.0))
-		ui.pace = smoothstep(16.0, Tuning.MAX_SPEED, speed)
+			ground_steps += 1
+			audio.play_sound(&"step", lerpf(-31.0, -21.0, ui.pace), 0.89 + ui.pace * 0.24 + 0.06 * sin(clock * 17.0))
+			if ground_steps % (1 if ui.pace > 0.64 and not low_graphics else 3) == 0:
+				var heel := 0.17 if ground_steps % 2 == 0 else -0.17
+				_emit_burst(player.position + Vector3(heel, 0.06, 0.28), GROUND_COLORS[district], true, 0.48 + ui.pace * 0.34)
+		skid_puffs_in = maxf(0.0, skid_puffs_in - dt)
+		if player.stance > 0.53 and skid_puffs_in <= 0.0:
+			_emit_burst(player.position + Vector3(0, 0.055, 0.43), GROUND_COLORS[district], true, 0.90 + ui.pace * 0.57)
+			skid_puffs_in = lerpf(0.119, 0.065, ui.pace) * (1.42 if low_graphics else 1.0)
 		save_in -= dt
 		if save_in <= 0.0:
 			_save_progress()
@@ -481,16 +578,22 @@ func _camera_step(dt: float) -> void:
 	if state == State.PAUSED:
 		return
 	shake = maxf(0.0, shake - dt)
+	landing_kick = maxf(0.0, landing_kick - dt * 1.1)
 	var blend := 1.0 - exp(-7.0 * dt)
-	var offset := player.position.x * (0.55 if portrait_view else 0.39)
-	var rise := minf(0.45, player.elevation * 0.25)
+	var power := ui.pace if state == State.RUNNING else 0.0
+	var offset := player.position.x * (0.62 if portrait_view else 0.42)
+	var rise := minf(0.47, player.elevation * 0.28) - player.stance * 0.54 - landing_kick
 	if state == State.MENU:
 		offset += sin(clock * 0.22) * 0.59
-	var shake_x := sin(clock * 89.0) * shake * 0.33
-	var shake_y := cos(clock * 74.0) * shake * 0.27
-	var goal := Vector3(offset + shake_x, 4.54 + rise + shake_y, 6.85 if portrait_view else 6.45)
+	var jitter := power * power * (0.013 if low_graphics else 0.024)
+	var shake_x := sin(clock * 89.0) * shake * 0.26 + sin(clock * 24.0) * jitter
+	var shake_y := cos(clock * 74.0) * shake * 0.24 + sin(clock * 31.0) * jitter
+	var pullback := (6.85 if portrait_view else 6.45) + power * 1.10
+	var goal := Vector3(offset + shake_x, 4.54 + rise + shake_y, pullback)
 	camera.position = camera.position.lerp(goal, blend)
-	camera.look_at(Vector3(offset * 0.45, 1.14 + rise * 0.40, -9.4), Vector3.UP)
+	camera_roll = lerpf(camera_roll, -player.enter_x * (0.015 + power * 0.021), blend)
+	camera.look_at(Vector3(offset * 0.45, 1.14 + rise * 0.48, -9.4), Vector3.UP)
+	camera.rotate_object_local(Vector3.BACK, camera_roll)
 	var base_fov := 78.0 if portrait_view else 59.0
-	var wanted := base_fov + ui.pace * 7.0
-	camera.fov = lerpf(camera.fov, wanted, blend)
+	var gain := 0.76 if portrait_view else 1.0
+	camera.fov = lerpf(camera.fov, base_fov + power * Tuning.SPEED_FOV_GAIN * gain, blend)
