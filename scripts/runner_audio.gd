@@ -12,6 +12,8 @@ const SOUNDS := {
 	&"click": preload("res://assets/sound/click.ogg"),
 	&"slide": preload("res://assets/sound/slide-grit.ogg"),
 	&"health": preload("res://assets/sound/heart-chime.ogg"),
+	&"slow": preload("res://assets/sound/time-chime.ogg"),
+	&"hover": preload("res://assets/sound/hover-pass.ogg"),
 }
 
 var music: AudioStreamPlayer
@@ -20,7 +22,9 @@ var forest_music: AudioStreamPlayer
 var surf: AudioStreamPlayer
 var forest_air: AudioStreamPlayer
 var wind: AudioStreamPlayer
-var weights := Vector3(1, 0, 0)
+var neon_music: AudioStreamPlayer
+var neon_air: AudioStreamPlayer
+var weights := Vector4(1, 0, 0, 0)
 var wind_power := 0.0
 var music_started := false
 var voices: Array[AudioStreamPlayer] = []
@@ -35,6 +39,8 @@ func _ready() -> void:
 	surf = _loop(preload("res://assets/sound/harbor-surf.ogg"))
 	forest_air = _loop(preload("res://assets/sound/forest-air.ogg"))
 	wind = _loop(preload("res://assets/sound/speed-wind.ogg"))
+	neon_music = _loop(preload("res://assets/sound/murang-neon.ogg"))
+	neon_air = _loop(preload("res://assets/sound/neon-air.ogg"))
 	_update_mix()
 	for index in range(7):
 		var voice := AudioStreamPlayer.new()
@@ -57,7 +63,7 @@ func start_music() -> void:
 	_update_mix()
 
 
-func set_scenery(mix: Vector3) -> void:
+func set_scenery(mix: Vector4) -> void:
 	if weights.is_equal_approx(mix):
 		return
 	weights = mix
@@ -86,6 +92,8 @@ func _update_mix() -> void:
 	_channel(music, 0.20 * sqrt(weights.x))
 	_channel(harbor_music, 0.20 * sqrt(weights.y))
 	_channel(forest_music, 0.20 * sqrt(weights.z))
+	_channel(neon_music, 0.20 * sqrt(weights.w))
+	_channel(neon_air, 0.42 * weights.w)
 	_channel(surf, 0.33 * weights.y)
 	_channel(forest_air, 0.35 * weights.z)
 	_channel(wind, 0.45 * pow(wind_power, 1.6))

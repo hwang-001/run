@@ -158,11 +158,13 @@ func _run() -> void:
 
 	_check_harbor()
 	_check_forest_and_hearts()
+	_check_neon_and_slow()
 	_check_schedule()
+	_check_slow_schedule()
 	_check_patterns(track)
 	_stress(track)
 	if failures.is_empty():
-		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows, seamless 1,500 m and 3,000 m boundaries, four speed tiers, isolated test starts, rare hearts and pooled endurance")
+		print("PASS: start, rear camera, run, keyboard and swipe, pause, jump/slide clearance, coins, damage, results, save, restart, solvable rows, seamless three map boundaries, isolated test starts, rare hearts, slow time and pooled endurance")
 	game.audio.music.stop()
 	for voice in game.audio.voices:
 		voice.stop()
@@ -303,14 +305,14 @@ func _check_forest_and_hearts() -> void:
 
 	game.health = 2
 	_key(KEY_H)
-	var debug: RunnerHeartPool.Slot = track.hearts.debug
+	var debug: RunnerPickupPool.Slot = track.hearts.debug
 	var at: float = debug.meter
 	_check(at > game.distance, "H places a pooled heart ahead during a test")
 	game.ui.heart_requested.emit()
 	_check(debug.meter == at, "A second debug request leaves one active debug heart")
 	runner.position.x = debug.lane * Tuning.LANE
 	runner.elevation = 0.0
-	track.hearts.scroll(at, STEP, track._heart_lane)
+	track.hearts.scroll(at, STEP)
 	var coins_before: int = game.coins
 	track.hearts.check_contacts(at - 2.1, at + 2.1, runner)
 	_check(game.health == Tuning.MAX_HEALTH and game.ui.heal_time > 0.0 and debug.meter < 0.0,
@@ -319,7 +321,7 @@ func _check_forest_and_hearts() -> void:
 	game.ui.heart_requested.emit()
 	at = debug.meter
 	runner.position.x = debug.lane * Tuning.LANE
-	track.hearts.scroll(at, STEP, track._heart_lane)
+	track.hearts.scroll(at, STEP)
 	track.hearts.check_contacts(at - 2.1, at + 2.1, runner)
 	_check(game.health == Tuning.MAX_HEALTH and game.coins == coins_before and debug.meter < 0.0,
 		"A full-health pickup is consumed without bonus health or coins")
@@ -340,7 +342,7 @@ func _check_forest_and_hearts() -> void:
 
 
 func _check_schedule() -> void:
-	var schedule := RunnerHeartSchedule.new()
+	var schedule := RunnerPickupSchedule.new()
 	var eligible := 0
 	var spawns := 0
 	for run_seed in range(100):
@@ -356,7 +358,7 @@ func _check_schedule() -> void:
 				last = meter
 				spawns += 1
 			_check(schedule.advance(meter) == -1, "An already evaluated marker cannot spawn twice")
-		var replay := RunnerHeartSchedule.new()
+		var replay := RunnerPickupSchedule.new()
 		replay.reset(run_seed, 19000.0)
 		_check(schedule.last_meter == replay.last_meter and schedule.advance(19100.0) == replay.advance(19100.0),
 			"A direct start preserves the seed and heart cooldown from prior course markers")
@@ -365,12 +367,141 @@ func _check_schedule() -> void:
 	print("Heart schedule: %d/%d eligible rolls (%.2f%%), 100 seeds" % [spawns, eligible, 100.0 * rate])
 
 
+
+func _check_neon_and_slow() -> void:
+	var track: RunnerTrack = game.track
+	var player: MurangPlayer = game.player
+	game.ui.test_requested.emit(0)
+	_check(game.test_run and game.distance == 0 and game.ui.test_run, "The city park has an isolated developer start")
+	game._show_home()
+	game._start()
+	_key(KEY_T)
+	_check(track.timers.debug.meter < 0.0, "Normal runs cannot force Slow Time")
+	game.ready_remaining = 0.0
+	game.distance = Tuning.NEON_START - 0.08
+	game.coins = 9
+	game.banked = 9
+	game.health = 2
+	track.reset(308, game.distance)
+	player.immunity = 1.0
+	game._on_slow_time(Vector3.ZERO)
+	_step(1)
+	_check(game.distance > Tuning.NEON_START and game.district == 3 and game.ui.area_time > 0.0, "4,500 m enters the city on the same run")
+	_check(game.health == 2 and game.coins >= 9 and game.slow.remaining > 5.9
+		and is_equal_approx(game.speed, game.base_speed * 0.8), "Transition carries health, coins, base speed and active Slow Time")
+	for chunk in track.chunks:
+		if chunk.index == 124:
+			_check(chunk.forest_floors[0].visible and chunk.neon_road[1].visible
+				and chunk.neon_approach[0].visible and not chunk.neon_street[0].visible, "Forest road meets the lit urban approach")
+		if chunk.index == 125:
+			_check(chunk.neon_street[0].visible and chunk.neon_road[0].visible
+				and not chunk.forest_banks[0].visible and not chunk.traffic.is_empty(), "Neon city uses its own street and vehicle assets")
+	game._show_home()
+
+	var recorded := RunnerSave.new()
+	recorded.read_records()
+	game.ui.test_requested.emit(3)
+	_check(game.test_run and game.distance == 4500.0 and game.ui.score == 0 and game.slow.remaining == 0.0,
+		"Stage four practice starts at full pace with a fresh timer")
+	game.ready_remaining = 0.0
+	game.ui.visibility_requested.emit()
+	_step(1)
+	_check(track.visibility_debug and track.debug_mesh.get_surface_count() == 1, "Developer visibility control draws obstacle faces")
+	game.ui.visibility_requested.emit()
+	_check(not track.visibility_debug and track.debug_mesh.get_surface_count() == 0, "Disabling outlines clears the debug mesh")
+	var wind_material := game.motion_fx.wind_material as ShaderMaterial
+	var full_tint: Color = wind_material.get_shader_parameter("tint")
+	_key(KEY_H)
+	_key(KEY_T)
+	var pickup := track.timers.debug
+	_check(pickup.meter >= game.distance + 16.0 and absf(pickup.meter - track.hearts.debug.meter) >= 2.4,
+		"Forced timer and heart are placed ahead at separate positions")
+	if pickup.meter < 0.0:
+		game._show_home()
+		return
+
+	var at := pickup.meter
+	player.lane = pickup.lane
+	player.position.x = pickup.lane * Tuning.LANE
+	track.timers.scroll(at, STEP)
+	track.timers.check_contacts(at - 2.1, at + 2.1, player)
+	_check(game.slow.remaining == Tuning.SLOW_DURATION and pickup.meter < 0.0, "Swept collection starts the six-second timer")
+	player.immunity = 10.0
+	var initial_distance: float = game.distance
+	_step(1)
+	_check(is_equal_approx((game.distance - initial_distance) / STEP, game.base_speed * 0.8)
+		and Engine.time_scale == 1.0, "Slow Time reduces forward distance per frame by 20 percent")
+	var slow_tint: Color = wind_material.get_shader_parameter("tint")
+	_check(slow_tint.a < full_tint.a, "Neon trails are weaker while the player moves slower")
+	var remaining: float = game.slow.remaining
+	game._on_slow_time(Vector3.ZERO)
+	_check(game.slow.remaining == remaining and is_equal_approx(game.slow.multiplier(), 0.8), "Slow Time neither refreshes nor stacks")
+	_key(KEY_ESCAPE)
+	_step(36)
+	_check(game.slow.remaining == remaining, "Pausing preserves the timer")
+	_key(KEY_ESCAPE)
+	var old_lane := player.lane
+	_key(KEY_D if old_lane < 1 else KEY_A)
+	_step(11)
+	_check(player.lane != old_lane and is_equal_approx(player.position.x, player.lane * Tuning.LANE), "Lane changes keep their timing during Slow Time")
+	_key(KEY_SPACE)
+	_step(5)
+	_check(player.elevation > 0.4, "Jump remains responsive with Slow Time")
+	_step(43)
+	_key(KEY_DOWN)
+	_step(12)
+	_check(player.height() == MurangPlayer.CROUCH_HEIGHT, "Slide keeps its collision profile with Slow Time")
+
+	_step(300)
+	_check(game.slow.remaining == 0.0 and game.slow.recovery > 0.0
+		and game.slow.recovery < Tuning.SLOW_RECOVERY, "Effect expiry begins the gradual recovery")
+	var recovering_ratio: float = game.speed / game.base_speed
+	game._on_slow_time(Vector3.ZERO)
+	_check(game.slow.remaining == 0, "Collection during the recovery cannot restart Slow Time")
+	_step(40)
+	_check(game.speed / game.base_speed > recovering_ratio and game.speed < game.base_speed, "Recovery accelerates smoothly from the reduced speed")
+	_step(62)
+	_check(game.slow.recovery == 0.0 and is_equal_approx(game.speed, game.base_speed), "Forward motion returns to the live base curve")
+	game._show_home()
+	var after := RunnerSave.new()
+	after.read_records()
+	_check(after.best == recorded.best and after.bank == recorded.bank and after.furthest == recorded.furthest,
+		"Neon practice and Slow Time do not modify regular records")
+
+
+func _check_slow_schedule() -> void:
+	var schedule := RunnerPickupSchedule.new(Tuning.SLOW_FIRST_METER, Tuning.SLOW_CHANCE,
+		Tuning.SLOW_COOLDOWN, 0x74696D65)
+	var hearts := RunnerPickupSchedule.new()
+	var eligible := 0
+	var spawns := 0
+	for run_seed in range(100):
+		schedule.reset(run_seed)
+		hearts.reset(run_seed)
+		_check(schedule.advance(2999.9) == -1, "Slow Time cannot spawn under 3,000 m")
+		var last := -Tuning.SLOW_COOLDOWN
+		for meter in range(Tuning.SLOW_FIRST_METER, 19001, Tuning.PICKUP_ROLL_STEP):
+			var heart := hearts.advance(meter)
+			var allowed := meter - last >= Tuning.SLOW_COOLDOWN and heart != meter
+			eligible += int(allowed)
+			var spawn := schedule.advance(meter, heart)
+			if spawn >= 0:
+				_check(spawn == meter and allowed, "Slow Time occupies an eligible marker and never shares a heart marker")
+				spawns += 1
+				last = meter
+			_check(schedule.advance(meter, heart) == -1, "Slow Time only rolls each marker once")
+	var rate := float(spawns) / eligible
+	_check(absf(rate - Tuning.SLOW_CHANCE) <= 0.015, "Eligible Slow Time rolls stay close to 20 percent")
+	print("Slow Time schedule: %d/%d eligible rolls (%.2f%%), 100 seeds" % [spawns, eligible, 100.0 * rate])
+
+
 func _check_patterns(track: RunnerTrack) -> void:
 	for seed_id in range(12):
 		track.reset(seed_id)
 		var last_safe := 0
 		var last_row := Tuning.FIRST_ROW - Tuning.ROW_STEP
-		for chunk_index in range(124):
+		var last_blocked := 0
+		for chunk_index in range(170):
 			track.scroll(chunk_index * Tuning.CHUNK_LENGTH, 0.0)
 			for chunk in track.chunks:
 				if chunk.index != chunk_index:
@@ -385,7 +516,13 @@ func _check_patterns(track: RunnerTrack) -> void:
 					for obstacle in chunk.obstacles:
 						if obstacle.armed and is_equal_approx(obstacle.meter, row_meter):
 							blocked += 1
-							var kit := 2 if obstacle.kind >= RunnerTrack.Kind.LOG else (1 if obstacle.kind >= RunnerTrack.Kind.BARREL else 0)
+							var kit := 0
+							if obstacle.kind >= RunnerTrack.Kind.HOVER_CAR:
+								kit = 3
+							elif obstacle.kind >= RunnerTrack.Kind.LOG:
+								kit = 2
+							elif obstacle.kind >= RunnerTrack.Kind.BARREL:
+								kit = 1
 							_check(kit == Tuning.district_at(row_meter), "Uses the correct obstacle kit")
 							_check(obstacle.lane != safe, "Coin guidance denotes an open lane")
 					_check(blocked >= 1 and blocked <= 2, "Every occupied row leaves an open lane")
@@ -393,9 +530,22 @@ func _check_patterns(track: RunnerTrack) -> void:
 					var gap := row_meter - last_row
 					_check(gap >= Tuning.HARBOR_ROW_STEP - 0.01 and gap <= Tuning.ROW_STEP + 0.01, "Row gaps remain bounded across chunk edges")
 					_check(gap / Tuning.speed_at(row_meter) > Tuning.LANE / Tuning.LANE_SPEED + 0.13, "Reaction and lane-change budget remains at maximum speed")
+					if row_meter >= Tuning.FOREST_START:
+						_check(is_equal_approx(gap, Tuning.LATE_ROW_STEP), "Late obstacles keep a full 12 m gap")
+						if last_row >= Tuning.FOREST_START:
+							_check(blocked + last_blocked <= 3, "Complex late rows do not directly follow each other")
+					last_blocked = blocked
 					last_safe = safe
 					last_row = row_meter
-	_check(Tuning.speed_at(4000) == Tuning.MAX_SPEED and Tuning.speed_at(1501) < Tuning.speed_at(2700) and Tuning.speed_at(0) == Tuning.START_SPEED, "Difficulty ramps to the speed cap")
+	for meter in [0.0, 1000.0, 1500.0, 2700.0, 3000.0]:
+		var old_speed := sqrt(Tuning.START_SPEED * Tuning.START_SPEED + 2.0 * Tuning.ACCELERATION * meter)
+		_check(is_equal_approx(Tuning.speed_at(meter), old_speed), "Early speed matches version 0.3")
+	var opening := Tuning.speed_at(3000)
+	var middle := Tuning.speed_at(4500)
+	var late := Tuning.speed_at(6000)
+	_check(absf(Tuning.speed_at(2999.99) - Tuning.speed_at(3000.01)) < 0.001, "Speed is continuous through the forest entry")
+	_check(late > middle and middle > opening and late - middle < middle - opening
+		and is_equal_approx(Tuning.speed_at(1000000.0), Tuning.MAX_SPEED), "Late acceleration tapers toward the cap")
 
 
 func _stress(track: RunnerTrack) -> void:

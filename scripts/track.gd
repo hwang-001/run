@@ -4,8 +4,9 @@ extends Node3D
 signal coin_taken(at: Vector3)
 signal obstacle_hit(at: Vector3)
 signal heart_taken(at: Vector3)
+signal timer_taken(at: Vector3)
 
-enum Kind { CRATE, CONE, BARRIER, FENCE, OVERHEAD, TRUCK, BARREL, CARGO, BOOM, DINGHY, LOG, BOULDER, WOOD_FENCE, BOUGH, WOOD_BOX, LOG_WALL }
+enum Kind { CRATE, CONE, BARRIER, FENCE, OVERHEAD, TRUCK, BARREL, CARGO, BOOM, DINGHY, LOG, BOULDER, WOOD_FENCE, BOUGH, WOOD_BOX, LOG_WALL, HOVER_CAR, ROAD_BLOCK, ENERGY, LASER, DATA_CRATE, LOW_SIGN, SERVICE_BOT, BEACON }
 
 const CITY := "res://assets/city/"
 const NATURE := "res://assets/props/nature-kit/"
@@ -14,14 +15,18 @@ const WORKS := "res://assets/props/city-kit-roads/"
 const PLATFORM := "res://assets/props/platformer-kit/"
 const TRUCKS := "res://assets/vehicles/"
 const SAFE_LANES := [0, -1, -1, 0, 1, 1, 0, 0, -1, 0, 1, 0]
-const OBSTACLE_DEPTH := [0.53, 0.38, 0.41, 0.20, 0.36, 1.04, 0.56, 0.67, 0.40, 1.17, 0.45, 0.89, 0.25, 0.40, 0.57, 0.75]
-const OBSTACLE_WIDTH := [0.55, 0.38, 0.66, 0.80, 0.78, 0.83, 0.53, 0.61, 0.79, 0.80, 0.77, 0.76, 0.80, 0.82, 0.58, 0.81]
-const OBSTACLE_TOP := [1.06, 0.84, 1.04, 0.87, 2.80, 3.20, 0.97, 1.18, 2.70, 2.60, 0.91, 2.68, 0.89, 2.37, 1.04, 2.60]
-const OBSTACLE_BOTTOM := [0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0]
+const OBSTACLE_DEPTH := [0.53, 0.38, 0.41, 0.20, 0.36, 1.04, 0.56, 0.67, 0.40, 1.17, 0.45, 0.89, 0.25, 0.40, 0.57, 0.75, 1.20, 0.53, 0.39, 0.40, 0.60, 0.55, 0.75, 0.45]
+const OBSTACLE_WIDTH := [0.55, 0.38, 0.66, 0.80, 0.78, 0.83, 0.53, 0.61, 0.79, 0.80, 0.77, 0.76, 0.80, 0.82, 0.58, 0.81, 0.83, 0.72, 0.78, 0.77, 0.79, 0.75, 0.80, 0.50]
+const OBSTACLE_TOP := [1.06, 0.84, 1.04, 0.87, 2.80, 3.20, 0.97, 1.18, 2.70, 2.60, 0.91, 2.68, 0.89, 2.37, 1.04, 2.60, 2.42, 0.96, 0.88, 1.87, 1.06, 2.44, 2.55, 0.86]
+const OBSTACLE_BOTTOM := [0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 0.0, 0.0, 0.0, 0.0, 1.29, 0.0, 1.29, 0.0, 0.0]
 const ROAD_WIDTH := 11.3
 const TILES_PER_CHUNK := 3
 const COINS_PER_ROW := 4
 const KIND_CAPACITY := 3
+const NEON_COMBO := [Kind.ROAD_BLOCK, Kind.LASER, Kind.HOVER_CAR, Kind.DATA_CRATE,
+	Kind.LOW_SIGN, Kind.BEACON, Kind.SERVICE_BOT, Kind.ENERGY]
+const NEON_CROSS := [Kind.SERVICE_BOT, Kind.DATA_CRATE, Kind.ROAD_BLOCK, Kind.LOW_SIGN,
+	Kind.BEACON, Kind.ENERGY, Kind.LASER, Kind.HOVER_CAR]
 const FOREST_COMBO := [Kind.LOG, Kind.BOUGH, Kind.BOULDER, Kind.WOOD_FENCE, Kind.BOUGH, Kind.WOOD_BOX, Kind.LOG_WALL, Kind.LOG]
 const FOREST_CROSS := [Kind.BOULDER, Kind.LOG_WALL, Kind.LOG, Kind.WOOD_BOX, Kind.LOG, Kind.BOUGH, Kind.WOOD_FENCE, Kind.BOUGH]
 const HARBOR_ORDER := [Kind.BARREL, Kind.BOOM, Kind.CARGO, Kind.DINGHY, Kind.BOOM, Kind.CARGO]
@@ -58,6 +63,11 @@ class Chunk:
 	var forest_banks: Array[Node3D] = []
 	var forest_verges: Array[Node3D] = []
 	var forest_floors: Array[Node3D] = []
+	var neon_approach: Array[Node3D] = []
+	var neon_street: Array[Node3D] = []
+	var neon_road: Array[Node3D] = []
+	var traffic: Array[NeonScenery.Traffic] = []
+	var neon_entry: Node3D
 	var items: Node3D
 
 
@@ -71,16 +81,36 @@ var lane_mark: QuadMesh
 var lane_material: StandardMaterial3D
 var coast: CoastScenery
 var forest: ForestScenery
-var hearts: RunnerHeartPool
+var neon: NeonScenery
+var hazards: TrackHazards
+var hearts: RunnerPickupPool
+var timers: RunnerPickupPool
+var visibility_debug := false
+var debug_mesh := ImmediateMesh.new()
+var debug_geometry: MeshInstance3D
 var preview := false
 
 
 func _ready() -> void:
 	coast = CoastScenery.new(_model)
 	forest = ForestScenery.new(coast, _model)
-	hearts = RunnerHeartPool.new()
+	neon = NeonScenery.new(coast, _model)
+	hazards = TrackHazards.new(coast)
+	hearts = RunnerPickupPool.new()
 	add_child(hearts)
 	hearts.taken.connect(func(at: Vector3): heart_taken.emit(at))
+	timers = RunnerPickupPool.new(true)
+	add_child(timers)
+	timers.taken.connect(func(at: Vector3): timer_taken.emit(at))
+	debug_geometry = MeshInstance3D.new()
+	debug_geometry.mesh = debug_mesh
+	var outline := StandardMaterial3D.new()
+	outline.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	outline.albedo_color = Color("#ffe297")
+	debug_geometry.material_override = outline
+	debug_geometry.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(debug_geometry)
+	debug_geometry.hide()
 	lane_mark = QuadMesh.new()
 	lane_mark.size = Vector2(0.09, 1.25)
 	lane_material = StandardMaterial3D.new()
@@ -101,6 +131,10 @@ func _model(parent: Node3D, path: String, at: Vector3, size: Vector3, angle := 0
 	item.rotation.y = angle
 	if first_load and (path.begins_with(ForestScenery.NATURE) or path.begins_with(ForestScenery.CASTLE)):
 		forest.finish_model(item, path)
+	if first_load and path.begins_with("res://assets/neon/"):
+		neon.finish_model(item, path)
+	if first_load and path.begins_with(CoastScenery.PLANTS + "tree-palm"):
+		coast.finish_palm(item)
 	parent.add_child(item)
 	if not shadow:
 		for child in item.find_children("*", "MeshInstance3D", true, false):
@@ -124,6 +158,9 @@ func _build_chunk(theme: int) -> Chunk:
 	chunk.forest_entry = Node3D.new()
 	chunk.visual.add_child(chunk.forest_entry)
 	_build_forest_gate(chunk.forest_entry)
+	chunk.neon_entry = Node3D.new()
+	chunk.visual.add_child(chunk.neon_entry)
+	neon.entry(chunk.neon_entry)
 	for tile in range(TILES_PER_CHUNK):
 		var z := -6.0 - tile * Tuning.ROW_STEP
 		var road := Node3D.new()
@@ -133,7 +170,10 @@ func _build_chunk(theme: int) -> Chunk:
 		var forest_bank := Node3D.new()
 		var forest_floor := Node3D.new()
 		var verge := Node3D.new()
-		for group in [road, street, shore, boardwalk, forest_bank, forest_floor, verge]:
+		var city_edge := Node3D.new()
+		var city_street := Node3D.new()
+		var city_road := Node3D.new()
+		for group in [road, street, shore, boardwalk, forest_bank, forest_floor, verge, city_edge, city_street, city_road]:
 			chunk.visual.add_child(group)
 		chunk.roads.append(road)
 		chunk.street.append(street)
@@ -142,6 +182,14 @@ func _build_chunk(theme: int) -> Chunk:
 		chunk.forest_banks.append(forest_bank)
 		chunk.forest_verges.append(verge)
 		chunk.forest_floors.append(forest_floor)
+		chunk.neon_approach.append(city_edge)
+		chunk.neon_street.append(city_street)
+		chunk.neon_road.append(city_road)
+		neon.build_approach(city_edge, theme, tile, z)
+		neon.build_asphalt(city_road, z)
+		var storefronts := Node3D.new()
+		city_street.add_child(storefronts)
+		neon.build_street(storefronts, city_street, theme, tile, z, chunk.traffic)
 		_build_street(street, theme, tile, z)
 		coast.build_shore(shore, theme, tile, z)
 		coast.boardwalk(boardwalk, z)
@@ -152,7 +200,7 @@ func _build_chunk(theme: int) -> Chunk:
 			Vector3(0, 0, z), Vector3(ROAD_WIDTH, 6.8, 12))
 		coast.asphalt_strip(road, z)
 		_build_marks(chunk.visual, z)
-		for group in [street, shore, boardwalk, forest_bank, forest_floor]:
+		for group in [street, shore, boardwalk, forest_bank, forest_floor, city_edge, storefronts]:
 			_batch_repeats(group)
 	# Pool each kit piece at chunk scope. A full kind uses another piece in the same kit.
 	for kind in range(Kind.size()):
@@ -160,6 +208,8 @@ func _build_chunk(theme: int) -> Chunk:
 			var obstacle := Obstacle.new()
 			obstacle.kind = kind
 			obstacle.visual = _build_obstacle(chunk.items, kind)
+			hazards.style(obstacle.visual, OBSTACLE_WIDTH[kind], OBSTACLE_DEPTH[kind],
+				OBSTACLE_BOTTOM[kind], OBSTACLE_TOP[kind], kind >= Kind.LOG)
 			chunk.obstacles.append(obstacle)
 	for coin_index in range(Tuning.ROWS_PER_CHUNK * COINS_PER_ROW):
 		var coin := Pickup.new()
@@ -214,6 +264,9 @@ func _build_street(parent: Node3D, theme: int, tile: int, z: float) -> void:
 			var shop: String = shops[(theme + tile) % shops.size()]
 			var tower: String = towers[(theme * 2 + tile) % towers.size()]
 			_model(parent, CITY + shop, Vector3(-10.4, 0.20, z - 0.6), Vector3.ONE * rng.randf_range(5.0, 6.5), PI / 2.0)
+			if tile == 1:
+				_model(parent, COMMERCIAL + "detail-awning-wide", Vector3(-8.38, 2.11, z + 0.48),
+					Vector3.ONE * 5.8, PI / 2, false)
 			_model(parent, COMMERCIAL + tower, Vector3(-22.0 - rng.randf_range(0.0, 6.0), -0.1, z - 2.2), Vector3.ONE * rng.randf_range(8.8, 10.9), PI / 2.0, false)
 		elif not plaza:
 			if (theme + tile) % 3 == 0:
@@ -352,6 +405,35 @@ func _build_obstacle(parent: Node3D, kind: int) -> Node3D:
 			_model(pivot, ForestScenery.NATURE + "log-stack", Vector3.ZERO, Vector3(3.55, 4.13, 2.13))
 			_model(pivot, ForestScenery.NATURE + "log-stack", Vector3(0.10, 1.20, 0.05), Vector3(2.80, 3.4, 1.82))
 			coast.label(pivot, "‹   ›", Vector3(0, 1.42, 0.90), 0.008, Color("#ffddb1"), CoastScenery.FONT)
+		Kind.HOVER_CAR:
+			_model(pivot, NeonScenery.SPACE + "craft-cargob", Vector3(0, 0.19, 0),
+				Vector3(1.03, 2.46, 0.87), PI)
+		Kind.ROAD_BLOCK:
+			_model(pivot, NeonScenery.SPACE + "machine-generator", Vector3(-0.33, 0, 0.08),
+				Vector3(1.70, 2.30, 1.32), 0.0)
+		Kind.ENERGY:
+			_model(pivot, NeonScenery.SPACE + "gate-simple", Vector3.ZERO, Vector3(1.54, 0.79, 1.51))
+			neon._bar(pivot, Vector3(0, 0.54, 0.24), Vector2(1.30, 0.44), neon.teal_screen, false)
+		Kind.LASER:
+			for side in [-1, 1]:
+				_model(pivot, NeonScenery.SPACE + "machine-barrellarge", Vector3(1.07 * side, 0, 0),
+					Vector3(0.62, 2.62, 0.75))
+			neon._bar(pivot, Vector3(0, 1.44, 0.13), Vector2(1.98, 0.14), neon.yellow_light, false)
+			neon._bar(pivot, Vector3(0, 1.34, 0.13), Vector2(1.98, 0.055), neon.yellow_light, false)
+		Kind.DATA_CRATE:
+			_model(pivot, NeonScenery.CARGO + "crate-wide", Vector3(0.23, 0.04, 0),
+				Vector3(1.93, 4.76, 0.97))
+			_model(pivot, NeonScenery.CARGO + "crate-medium", Vector3(-0.62, 0.08, 0.06),
+				Vector3(0.90, 2.09, 0.79))
+		Kind.LOW_SIGN:
+			for side in [-1, 1]:
+				_model(pivot, NeonScenery.ROAD + "light-square-double", Vector3(side * 1.05, 0, 0),
+					Vector3(5.5, 3.54, 2.1), PI / 2.0, false)
+			neon._bar(pivot, Vector3(0, 1.74, 0.23), Vector2(1.94, 0.87), neon.pink_screen, false)
+		Kind.SERVICE_BOT:
+			_model(pivot, NeonScenery.SPACE + "rover", Vector3.ZERO, Vector3(5.10, 6.40, 4.00), -0.10)
+		Kind.BEACON:
+			_model(pivot, NeonScenery.SPACE + "machine-barrellarge", Vector3.ZERO, Vector3(1.30, 1.43, 1.31))
 	return pivot
 
 
@@ -360,7 +442,10 @@ func reset(run_seed: int, start_at := 0.0, show_preview := false) -> void:
 	phase = posmod(run_seed, SAFE_LANES.size())
 	total_reuses = 0
 	preview = show_preview
-	hearts.reset(run_seed, start_at, preview)
+	hearts.reset(run_seed)
+	timers.reset(run_seed)
+	_set_visibility_debug(false)
+	_pickups_through(start_at - 0.58, INF)
 	var first := floori(start_at / Tuning.CHUNK_LENGTH) - 1
 	for index in range(first, first + chunks.size()):
 		_fill_chunk(chunks[posmod(index + 1, chunks.size())], index)
@@ -384,34 +469,43 @@ func _fill_chunk(chunk: Chunk, index: int) -> void:
 		chunk.street[tile].visible = tile_start < Tuning.HARBOR_APPROACH
 		chunk.shore[tile].visible = tile_start >= Tuning.HARBOR_APPROACH and tile_start < Tuning.FOREST_APPROACH
 		chunk.boardwalk[tile].visible = tile_start >= Tuning.HARBOR_START and tile_start < Tuning.FOREST_START
-		chunk.forest_banks[tile].visible = tile_start >= Tuning.FOREST_APPROACH
+		chunk.forest_banks[tile].visible = tile_start >= Tuning.FOREST_APPROACH and tile_start < Tuning.NEON_START
 		chunk.forest_verges[tile].visible = tile_start >= Tuning.FOREST_GREENBELT and tile_start < Tuning.FOREST_APPROACH
-		chunk.forest_floors[tile].visible = tile_start >= Tuning.FOREST_START
+		chunk.forest_floors[tile].visible = tile_start >= Tuning.FOREST_START and tile_start < Tuning.NEON_ASPHALT
+		chunk.neon_approach[tile].visible = tile_start >= Tuning.NEON_APPROACH
+		chunk.neon_street[tile].visible = tile_start >= Tuning.NEON_START
+		chunk.neon_road[tile].visible = tile_start >= Tuning.NEON_ASPHALT
 	chunk.entry.visible = not preview and start <= Tuning.HARBOR_START and start + Tuning.CHUNK_LENGTH > Tuning.HARBOR_START
 	chunk.entry.position.z = -(Tuning.HARBOR_START - start)
 	chunk.forest_entry.visible = not preview and start <= Tuning.FOREST_START and start + Tuning.CHUNK_LENGTH > Tuning.FOREST_START
 	chunk.forest_entry.position.z = -(Tuning.FOREST_START - start)
+	chunk.neon_entry.visible = not preview and start <= Tuning.NEON_START and start + Tuning.CHUNK_LENGTH > Tuning.NEON_START
+	chunk.neon_entry.position.z = -(Tuning.NEON_START - start)
 	chunk.items.visible = not preview
 	if preview:
 		return
 
-	# The 1,500 m boundary falls on the third 12 m tile of a pooled chunk.
-	# Full harbor chunks have four 9 m rows. The mixed chunk keeps its city spacing.
-	var full_harbor := start >= Tuning.HARBOR_START
-	var row_count := Tuning.ROWS_PER_CHUNK if full_harbor else 3
-	var first_harbor_chunk := ceili(Tuning.HARBOR_START / Tuning.CHUNK_LENGTH)
+	# Keep the original early grids. The mixed forest chunk uses 12 m
+	# thereafter, with a stable row index and no short gap at either boundary.
+	var dense_begin := ceili(Tuning.HARBOR_START / Tuning.CHUNK_LENGTH)
+	var late_begin := floori(Tuning.FOREST_START / Tuning.CHUNK_LENGTH)
+	var dense := index >= dense_begin and index < late_begin
+	var row_count := Tuning.ROWS_PER_CHUNK if dense else 3
 	var used: Array[int] = []
 	used.resize(Kind.size())
 	used.fill(0)
 	for row in range(row_count):
-		var offset := (3.0 + row * Tuning.HARBOR_ROW_STEP) if full_harbor else (4.0 + row * Tuning.ROW_STEP)
-		var meter := start + offset
-		if meter < Tuning.FIRST_ROW:
-			continue
+		var offset := 4.0 + row * Tuning.ROW_STEP
 		var row_number := index * 3 + row
-		if full_harbor:
-			row_number = first_harbor_chunk * 3 + (index - first_harbor_chunk) * row_count + row
-		_fill_row(chunk, row, row_number, offset, meter, rng, used)
+		if dense:
+			offset = 3.0 + row * Tuning.HARBOR_ROW_STEP
+			row_number = dense_begin * 3 + (index - dense_begin) * Tuning.ROWS_PER_CHUNK + row
+		elif index >= late_begin:
+			offset = 3.0 + row * Tuning.LATE_ROW_STEP
+			row_number = dense_begin * 3 + (late_begin - dense_begin) * Tuning.ROWS_PER_CHUNK + (index - late_begin) * 3 + row
+		var meter := start + offset
+		if meter >= Tuning.FIRST_ROW:
+			_fill_row(chunk, row, row_number, offset, meter, rng, used)
 
 
 func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: float, rng: RandomNumberGenerator, used: Array[int]) -> void:
@@ -422,18 +516,23 @@ func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: fl
 	if rng.randi_range(0, 1) == 1:
 		closed.reverse()
 	var difficulty := Tuning.double_row_chance_at(meter)
-	var count := 2 if meter > Tuning.DOUBLE_ROW_START and rng.randf() < difficulty else 1
+	var permits_pair := meter < Tuning.FOREST_START or row_number % 2 == 1
+	var count := 2 if permits_pair and meter > Tuning.DOUBLE_ROW_START and rng.randf() < difficulty else 1
 	var kind_limit := Kind.CONE if meter < 45.0 else (Kind.FENCE if meter < 105.0 else Kind.TRUCK)
 	var forest_route := meter >= Tuning.FOREST_START
-	var lowest := Kind.LOG if forest_route else (Kind.BARREL if harbor else Kind.CRATE)
-	var highest := Kind.LOG_WALL if forest_route else (Kind.DINGHY if harbor else kind_limit)
+	var neon_route := meter >= Tuning.NEON_START
+	var lowest := Kind.HOVER_CAR if neon_route else (Kind.LOG if forest_route else (Kind.BARREL if harbor else Kind.CRATE))
+	var highest := Kind.BEACON if neon_route else (Kind.LOG_WALL if forest_route else (Kind.DINGHY if harbor else kind_limit))
 	if meter == Tuning.FIRST_ROW:
 		safe = 0
 		closed = [-1, 1]
 		count = 1
 	for slot in range(count):
 		var kind := rng.randi_range(Kind.CRATE, kind_limit)
-		if forest_route:
+		if neon_route:
+			var chain := NEON_COMBO if slot == 0 else NEON_CROSS
+			kind = chain[posmod(row_number + phase, chain.size())]
+		elif forest_route:
 			var chain := FOREST_COMBO if slot == 0 else FOREST_CROSS
 			kind = chain[posmod(row_number + phase, chain.size())]
 		elif harbor:
@@ -465,7 +564,7 @@ func _fill_row(chunk: Chunk, row: int, row_number: int, offset: float, meter: fl
 		coin.visual.show()
 
 
-func scroll(distance: float, dt: float) -> void:
+func scroll(distance: float, dt: float, speed := 0.0) -> void:
 	elapsed += dt
 	var base_index := floori(distance / Tuning.CHUNK_LENGTH) - 1
 	for chunk in chunks:
@@ -475,6 +574,8 @@ func scroll(distance: float, dt: float) -> void:
 			total_reuses += cycles
 		chunk.visual.position.z = distance - chunk.index * Tuning.CHUNK_LENGTH
 		chunk.visual.visible = chunk.visual.position.z > -147.0 and chunk.visual.position.z < 55.0
+		if chunk.visual.visible and chunk.index * Tuning.CHUNK_LENGTH >= Tuning.NEON_START:
+			neon.animate(chunk.traffic, elapsed, speed)
 		if preview or chunk.visual.position.z < -90.0:
 			continue
 		for coin in chunk.coins:
@@ -487,7 +588,11 @@ func scroll(distance: float, dt: float) -> void:
 					coin.finish_material.emission_energy_multiplier = 0.11 + 0.34 * pow(absf(cos(spin)), 12.0)
 
 	if not preview:
-		hearts.scroll(distance, dt, _heart_lane)
+		_pickups_through(distance + Tuning.PICKUP_LOOKAHEAD, distance - 0.58)
+		hearts.scroll(distance, dt)
+		timers.scroll(distance, dt)
+	if visibility_debug:
+		_update_debug_boxes(distance)
 
 
 func check_contacts(previous: float, distance: float, player: MurangPlayer) -> void:
@@ -530,6 +635,7 @@ func check_contacts(previous: float, distance: float, player: MurangPlayer) -> v
 			coin_taken.emit(Vector3(coin.visual.position.x, coin.visual.position.y, 0.0))
 
 	hearts.check_contacts(previous, distance, player)
+	timers.check_contacts(previous, distance, player)
 
 
 func spawn_lane_at(distance: float) -> int:
@@ -541,7 +647,7 @@ func spawn_lane_at(distance: float) -> int:
 	return available[0] if not available.is_empty() else 0
 
 
-func _heart_lane(meter: float) -> int:
+func _pickup_lane(meter: float) -> int:
 	var nearest := 10.0
 	var lane_id := 0
 	for chunk in chunks:
@@ -557,6 +663,56 @@ func _heart_lane(meter: float) -> int:
 	return lane_id
 
 
-func debug_heart(distance: float) -> bool:
-	var meter := distance + 16.0
-	return hearts.spawn_debug(meter, _heart_lane(meter))
+func _pickups_through(through: float, earliest_visible: float) -> void:
+	while hearts.schedule.next_meter <= through:
+		var marker := hearts.schedule.next_meter
+		var heart := hearts.schedule.advance(marker)
+		var timer := timers.schedule.advance(marker, heart)
+		if heart >= earliest_visible:
+			hearts.spawn_natural(heart, _pickup_lane(heart))
+		if timer >= earliest_visible:
+			timers.spawn_natural(timer, _pickup_lane(timer))
+
+
+func debug_pickup(distance: float, is_timer: bool) -> bool:
+	var target := timers if is_timer else hearts
+	for offset in range(16, 27):
+		var meter := distance + offset
+		if not hearts.has_near(meter, 2.40) and not timers.has_near(meter, 2.40):
+			return target.spawn_debug(meter, _pickup_lane(meter))
+	return false
+
+
+func _set_visibility_debug(enabled: bool) -> void:
+	visibility_debug = enabled
+	debug_geometry.visible = enabled
+	if not enabled:
+		debug_mesh.clear_surfaces()
+
+
+func _update_debug_boxes(distance: float) -> void:
+	debug_mesh.clear_surfaces()
+	var drawn := false
+	for chunk in chunks:
+		for obstacle in chunk.obstacles:
+			if not obstacle.armed:
+				continue
+			var z := distance - obstacle.meter
+			if z > 3.0 or z < -42.0:
+				continue
+			var kind := obstacle.kind
+			var x := obstacle.lane * Tuning.LANE
+			var w: float = OBSTACLE_WIDTH[kind]
+			var low: float = OBSTACLE_BOTTOM[kind]
+			var high: float = OBSTACLE_TOP[kind]
+			var front: float = z + OBSTACLE_DEPTH[kind]
+			if not drawn:
+				debug_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+				drawn = true
+			var corners := [Vector3(x - w, low, front), Vector3(x + w, low, front),
+				Vector3(x + w, high, front), Vector3(x - w, high, front)]
+			for i in range(4):
+				debug_mesh.surface_add_vertex(corners[i])
+				debug_mesh.surface_add_vertex(corners[(i + 1) % 4])
+	if drawn:
+		debug_mesh.surface_end()

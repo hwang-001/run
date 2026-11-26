@@ -2,16 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cjd858yak6w5m"
-path="res://.godot/imported/murang.webp-6b2eca9c4d70b20811a0a13773aceee7.ctex"
+uid="uid://bqbowv34xxn5n"
+path="res://.godot/imported/light-square-double_colormap.png-cfc127e2400102700fce1fa93dab81a5.ctex"
 metadata={
 "vram_texture": false
+}
+generator_parameters={
+"md5": "9024a760dd1e13f0ccd0c2e2bd7e1811"
 }
 
 [deps]
 
-source_file="res://assets/ui/murang.webp"
-dest_files=["res://.godot/imported/murang.webp-6b2eca9c4d70b20811a0a13773aceee7.ctex"]
+source_file="res://assets/neon/city-kit-roads/light-square-double_colormap.png"
+dest_files=["res://.godot/imported/light-square-double_colormap.png-cfc127e2400102700fce1fa93dab81a5.ctex"]
 
 [params]
 
@@ -23,7 +26,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=false
+mipmaps/generate=true
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

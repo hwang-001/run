@@ -1,10 +1,10 @@
-class_name RunnerHeartPool
+class_name RunnerPickupPool
 extends Node3D
 
 signal taken(at: Vector3)
 
-const MODEL := preload("res://assets/forest/platformer-kit/heart.glb")
-const HEART_COLOR := Color("#ef3456")
+const HEART := preload("res://assets/forest/platformer-kit/heart.glb")
+const TIMER := preload("res://assets/neon/slow-time.glb")
 
 
 class Slot:
@@ -16,14 +16,23 @@ class Slot:
 
 var natural: Slot
 var debug: Slot
-var schedule := RunnerHeartSchedule.new()
+var schedule: RunnerPickupSchedule
+var time_item: bool
 var glow := StandardMaterial3D.new()
 var elapsed := 0.0
 var performance_mode := false
 
 
+func _init(is_timer := false) -> void:
+	time_item = is_timer
+	if is_timer:
+		schedule = RunnerPickupSchedule.new(Tuning.SLOW_FIRST_METER, Tuning.SLOW_CHANCE, Tuning.SLOW_COOLDOWN, 0x74696D65)
+	else:
+		schedule = RunnerPickupSchedule.new()
+
+
 func _ready() -> void:
-	glow.albedo_color = HEART_COLOR
+	glow.albedo_color = Color("#e94462")
 	glow.metallic = 0.18
 	glow.roughness = 0.25
 	glow.emission_enabled = true
@@ -37,13 +46,15 @@ func _build_slot() -> Slot:
 	var slot := Slot.new()
 	slot.node = Node3D.new()
 	add_child(slot.node)
-	var model := MODEL.instantiate() as Node3D
-	model.scale = Vector3.ONE * 2.36
-	model.position.y = -0.42
+	var model := (TIMER if time_item else HEART).instantiate() as Node3D
+	if not time_item:
+		model.scale = Vector3.ONE * 2.40
+		model.position.y = -0.42
 	slot.node.add_child(model)
 	for child in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh := child as MeshInstance3D
-		mesh.material_override = glow
+		if not time_item:
+			mesh.material_override = glow
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var shimmer := CPUParticles3D.new()
 	shimmer.emitting = false
@@ -61,7 +72,7 @@ func _build_slot() -> Slot:
 	star.size = Vector3(0.053, 0.12, 0.035)
 	var tint := StandardMaterial3D.new()
 	tint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	tint.albedo_color = Color("#ffd2d2")
+	tint.albedo_color = Color("#a7eeff") if time_item else Color("#ffd2d2")
 	shimmer.mesh = star
 	shimmer.material_override = tint
 	shimmer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -77,12 +88,16 @@ func _remove(slot: Slot) -> void:
 	slot.meter = -1.0
 
 
-func reset(run_seed: int, start_at: float, preview: bool) -> void:
+func reset(run_seed: int) -> void:
 	_remove(natural)
 	_remove(debug)
 	elapsed = 0.0
-	if not preview:
-		schedule.reset(run_seed, start_at - 0.58)
+	schedule.reset(run_seed)
+
+
+func has_near(meter: float, separation: float) -> bool:
+	return (natural.meter >= 0 and absf(natural.meter - meter) < separation) \
+		or (debug.meter >= 0 and absf(debug.meter - meter) < separation)
 
 
 func spawn_debug(meter: float, lane_id: int) -> bool:
@@ -92,6 +107,10 @@ func spawn_debug(meter: float, lane_id: int) -> bool:
 	return true
 
 
+func spawn_natural(meter: float, lane_id: int) -> void:
+	_place(natural, meter, lane_id)
+
+
 func _place(slot: Slot, meter: float, lane_id: int) -> void:
 	slot.meter = meter
 	slot.lane = lane_id
@@ -99,17 +118,14 @@ func _place(slot: Slot, meter: float, lane_id: int) -> void:
 	slot.node.show()
 
 
-func scroll(distance: float, dt: float, lane_selector: Callable) -> void:
+func scroll(distance: float, dt: float) -> void:
 	elapsed += dt
-	var candidate := schedule.advance(distance + Tuning.HEART_LOOKAHEAD)
-	if candidate >= distance - 0.58:
-		_place(natural, candidate, lane_selector.call(float(candidate)))
 	for slot in [natural, debug]:
 		if slot.meter < 0.0:
 			continue
 		var remaining: float = slot.meter - distance
 		slot.node.position = Vector3(slot.lane * Tuning.LANE, 1.13 + sin(elapsed * 3.7) * 0.13, -remaining)
-		slot.node.rotation.y = elapsed * 1.9
+		slot.node.rotation.y = elapsed * (1.55 if time_item else 1.9)
 		slot.sparks.emitting = not performance_mode and remaining < 36.0 and remaining > -1.0
 
 

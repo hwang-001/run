@@ -19,7 +19,7 @@ var sunlight := ShaderMaterial.new()
 func _init(surfaces: CoastScenery, instancer: Callable) -> void:
 	source = surfaces
 	model = instancer
-	source._pave(dirt, TRAIL, Color("#cfba99"), Vector2(2.1, 3.0))
+	source._pave(dirt, TRAIL, Color("#c1b49e"), Vector2(2.1, 3.0))
 	creek.shader = WATER
 	falls.shader = WATER
 	falls.set_shader_parameter("waterfall", true)
@@ -35,9 +35,8 @@ func floor_tile(parent: Node3D, z: float, bridge: bool) -> void:
 			model.call(parent, NATURE + "bridge-wood", Vector3(side * 5.0, -0.53, z),
 				Vector3(1.45, 2.24, 11.53), 0.0, true)
 		else:
-			for slot in [0, 1]:
-				model.call(parent, NATURE + "grass-leafslarge", Vector3(side * 4.57, -0.018, z - 3.0 + 5.0 * slot),
-					Vector3(2.60, 1.97, 5.0), side * 0.65, false)
+			model.call(parent, NATURE + "grass-leafslarge", Vector3(side * 5.02, -0.05, z + side * 2.8),
+				Vector3(2.60, 1.62, 4.0), side * 0.65, false)
 
 
 func build_banks(parent: Node3D, theme: int, tile: int, z: float) -> void:
@@ -111,9 +110,9 @@ func finish_model(root: Node3D, asset_path: String) -> void:
 	# Imported meshes keep their geometry and palette structure. The valley uses
 	# evergreen tones, muted slate and warm bark across the different asset kits.
 	var surfaces := {
-		"grass": Color("#538653"),
-		"leafsGreen": Color("#527e46"),
-		"leafsDark": Color("#22583f"),
+		"grass": Color("#537453"),
+		"leafsGreen": Color("#55714f"),
+		"leafsDark": Color("#344f42"),
 		"woodBarkDark": Color("#835944"),
 		"woodBark": Color("#967050"),
 		"woodInner": Color("#e6bd86"),
@@ -131,11 +130,11 @@ func finish_model(root: Node3D, asset_path: String) -> void:
 			if key.begins_with("leafs"):
 				var canopy := ShaderMaterial.new()
 				canopy.shader = preload("res://scripts/forest_foliage.gdshader")
-				canopy.set_shader_parameter("fir", surfaces.get(key, Color("#32684b")))
+				canopy.set_shader_parameter("fir", surfaces.get(key, Color("#3b5c49")))
 				mesh.mesh.surface_set_material(index, canopy)
 			elif surfaces.has(key):
 				material.albedo_color = surfaces[key]
 			elif asset_path.contains("ground-hills"):
 				material.albedo_color = Color("#84957d")
 			elif key == "_defaultMat" and (asset_path.contains("rock-") or asset_path.contains("stone-")):
-				material.albedo_color = Color("#99a59a")
+				material.albedo_color = Color("#919d96")

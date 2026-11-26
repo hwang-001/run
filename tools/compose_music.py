@@ -6,9 +6,10 @@ import sys
 import wave
 
 RATE = 32000
+NEON = "--neon" in sys.argv[2:]
 HARBOR = "--harbor" in sys.argv[2:]
 FOREST = "--forest" in sys.argv[2:]
-BEAT = 60 / (146 if FOREST else (134 if HARBOR else 122))
+BEAT = 60 / (154 if NEON else (146 if FOREST else (134 if HARBOR else 122)))
 LENGTH = round(BEAT * 64 * RATE)
 mix = [0.0] * LENGTH
 noise = random.Random(0)
@@ -55,6 +56,14 @@ if FOREST:
         (86, 84, 81, 77, 81, 84), (82, 81, 77, 74, 77, 81),
         (84, 89, 88, 84, 81, 84), (84, 79, 76, 79, 83, 84),
     ]
+if NEON:
+    chords = [(57, 60, 64, 71), (53, 57, 60, 67), (60, 64, 67, 74), (55, 59, 62, 69)]
+    melodies = [
+        (69, 76, 79, 83, 79, 76), (77, 81, 84, 83, 81, 76),
+        (76, 79, 84, 88, 86, 79), (74, 79, 83, 86, 83, 79),
+        (84, 83, 79, 76, 79, 88), (84, 81, 77, 72, 77, 84),
+        (86, 84, 81, 79, 83, 86), (83, 79, 74, 71, 74, 79),
+    ]
 for bar in range(16):
     chord = chords[bar % 4]
     start = bar * 4
@@ -64,7 +73,7 @@ for bar in range(16):
     for i, offset in enumerate((0.25, 1.25, 2.25, 3.25)):
         add(start + offset, 0.7, chord[(i*3) % 4], 0.075, "bell")
     for i, offset in enumerate((0, 1.5, 2, 3.25)):
-        add(start + offset, 0.72, chord[i % 2] - 24, 0.22, "bass")
+        add(start + offset, 0.72, chord[i % 2] - 24, 0.28 if NEON else 0.22, "bass")
     for beat in range(4):
         if beat % 2 == 0:
             add(start + beat, 0.36, 36, 0.26, "kick")

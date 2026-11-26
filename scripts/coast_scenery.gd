@@ -22,7 +22,7 @@ func _init(instancer: Callable) -> void:
 	make_model = instancer
 	_pave(asphalt, ASPHALT, Color("#646f83"), Vector2(4.0, 7.8))
 	_pave(deck, WOOD, Color("#dec8a7"), Vector2(2.4, 3.0))
-	_pave(sand, SAND, Color("#efd4a3"), Vector2(5.0, 4.0))
+	_pave(sand, SAND, Color("#e9c79d"), Vector2(5.0, 4.0))
 	water.shader = WATER
 
 
@@ -119,3 +119,16 @@ func label(parent: Node3D, value: String, at: Vector3, pixel: float, color: Colo
 	text.position = at
 	text.shaded = false
 	parent.add_child(text)
+
+
+func finish_palm(palm: Node3D) -> void:
+	for node in palm.find_children("*", "MeshInstance3D", true, false):
+		var part := node as MeshInstance3D
+		for surface_index in part.mesh.get_surface_count():
+			var source := part.mesh.surface_get_material(surface_index) as StandardMaterial3D
+			if not source or not source.resource_name.begins_with("leafs"):
+				continue
+			var foliage := ShaderMaterial.new()
+			foliage.shader = preload("res://scripts/palm_canopy.gdshader")
+			foliage.set_shader_parameter("leaf", source.albedo_color.lerp(Color("#709657"), 0.18))
+			part.mesh.surface_set_material(surface_index, foliage)

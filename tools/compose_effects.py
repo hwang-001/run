@@ -68,7 +68,30 @@ def heart(t):
     return tone * .22 * min(1, (0.76 - t) * 24)
 
 
+def time_chime(t):
+    soft = math.sin(math.tau * (1045 * t - 237 * t * t))
+    contra = math.sin(math.tau * (537 * t - 103 * t * t))
+    return (soft * .32 + contra * .38) * math.exp(-3.1 * t) * min(1, 78 * t, (0.68 - t) * 16)
+
+
+def hover(t):
+    global dark
+    dark += (RNG.uniform(-1, 1) - dark) * .056
+    swell = math.sin(math.pi * t / 0.84) ** 2
+    engine = math.sin(math.tau * (175 * t - 43 * t * t))
+    return (dark * 1.34 + engine * .12) * swell
+
+
+def neon_air(t):
+    global dark
+    dark += (RNG.uniform(-1, 1) - dark) * .04
+    traffic = (.32 + .24 * math.sin(math.tau * t / 4)) * dark
+    hum = .028 * math.sin(math.tau * 58 * t) + .020 * math.sin(math.tau * 81 * t)
+    return (traffic + hum) * min(1, 24 * t, (12 - t) * 24)
+
+
 for name, duration, sample in [("forest-air", 12, forest), ("speed-wind", 4, wind),
-                               ("slide-grit", .66, slide), ("heart-chime", .76, heart)]:
+                               ("slide-grit", .66, slide), ("heart-chime", .76, heart), ("neon-air", 12, neon_air),
+                               ("hover-pass", .84, hover), ("time-chime", .68, time_chime)]:
     dark = middle = 0
     sound(name, duration, sample)

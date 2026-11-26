@@ -14,3 +14,6 @@ were tone mapped and packed as WebP for Murang Run.
 v0.3 valley sources, CC0 1.0
 Forrest Sand 01 — https://polyhaven.com/a/forrest_sand_01
 Kloofendal Misty Morning Pure Sky — https://polyhaven.com/a/kloofendal_misty_morning_puresky
+
+v0.4 neon city source, CC0 1.0
+Qwantani Night Pure Sky — https://polyhaven.com/a/qwantani_night_puresky

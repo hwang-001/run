@@ -53,6 +53,13 @@ func _ready() -> void:
 	tail_rest = tail.position
 	torso_mesh = body.find_child("Round torso", true, false) as MeshInstance3D
 	head_mesh = head.find_child("Round head", true, false) as MeshInstance3D
+	for piece in [head_mesh, torso_mesh]:
+		for index in piece.mesh.get_surface_count():
+			var base := piece.get_active_material(index) as StandardMaterial3D
+			if base:
+				var material := base.duplicate() as StandardMaterial3D
+				material.roughness = 0.75
+				piece.set_surface_override_material(index, material)
 	heart = head.find_child("Heart", true, false) as Node3D
 	for side in ["L", "R"]:
 		arms.append(body.find_child("Arm" + side, true, false) as Node3D)
@@ -170,12 +177,13 @@ func step(dt: float, speed: float, active: bool, defeated: bool) -> void:
 		stance = move_toward(stance, 0.0, dt * 10.0)
 	var pose := 1.0 - exp(-dt * 21.0)
 	var stride := sin(gait) * lerpf(0.86, 1.15, clampf(speed / Tuning.MAX_SPEED, 0.0, 1.0)) if running else 0.0
-	var bob := absf(cos(gait)) * 0.071 if running else sin(visual_time * 3.2) * 0.027
+	var bob := cos(gait) * cos(gait) * 0.071 if running else sin(visual_time * 3.2) * 0.029
 	var recoil := impact / 0.38 if active else 0.0
 	model.position.y = elevation
 	# Only local pivots are posed. The character mesh hierarchy keeps its authored scale.
 	var run_height := 0.70 + bob - collapse * 0.29 - landing * 0.061
-	var run_pitch := (-0.07 - speed * 0.0054 if running else 0.0) + recoil * 0.47 + collapse * 0.89
+	var air_pitch := clampf(-vertical_speed * 0.012, -0.10, 0.09)
+	var run_pitch := (-0.07 - speed * 0.0054 if running else air_pitch) + recoil * 0.47 + collapse * 0.89
 	body.position.y = lerpf(run_height, slide_pose.torso.x, stance)
 	body.position.z = -0.14 * stance
 	body.rotation.x = lerpf(run_pitch, slide_pose.torso.y, stance)

@@ -14,6 +14,7 @@ NOTICES = {
     "Lucide-LICENSE.txt": ROOT / "assets/ui/lucide/LICENSE.txt",
     "Poly-Haven.txt": ROOT / "assets/surfaces/LICENSE.txt",
     "OFL-GowunDodum.txt": ROOT / "assets/ui/OFL-GowunDodum.txt",
+    "OFL-BlackHanSans.txt": ROOT / "assets/ui/OFL-BlackHanSans.txt",
     "OFL-Outfit.txt": ROOT / "assets/ui/OFL-Outfit.txt",
 }
 WINDOWS_HELP = """무랑 런 {version} · Windows x64
@@ -22,8 +23,9 @@ ZIP을 모두 푼 다음 MurangRun.exe를 실행하세요. Godot 설치는 필�
 이동 A / D 또는 ← / →, 점프 W / Space / ↑, 슬라이드 S / ↓,
 일시정지 Esc, 시작과 재도전 Enter 또는 화면 버튼
 
-해변 맵 테스트는 1,500m, 신규 숲 맵 테스트는 3,000m부터 시작합니다.
-테스트 중 H 또는 하트 생성 버튼으로 회복 하트를 앞에 놓을 수 있습니다.
+개발자 테스트 메뉴에서 0m, 1,500m, 3,000m, 4,500m부터 연습할 수 있습니다.
+테스트 중 H로 회복 하트, T로 슬로우 타임을 배치합니다.
+충돌 표시는 장애물 윤곽 버튼으로 켭니다. 테스트 기록은 저장되지 않습니다.
 일반 주행에서 얻은 최고 점수, 최대 이동 거리, 누적 코인은 이 PC에 저장됩니다.
 소스 코드와 에셋 정보는 https://github.com/hwang-001/run 에서 확인할 수 있습니다.
 """

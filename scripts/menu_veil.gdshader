@@ -4,13 +4,13 @@ uniform bool title = true;
 uniform bool portrait = false;
 
 void fragment() {
-	float edge = smoothstep(0.29, 0.74, length((UV - vec2(0.55, 0.44)) * vec2(0.99, 0.83)));
-	float bottom = smoothstep(0.45, 1.0, UV.y);
+	vec3 ink = vec3(0.025, 0.075, 0.12);
 	if (title) {
-		float left = portrait ? smoothstep(0.2, 1.0, UV.y) : 1.0 - smoothstep(0.15, 0.78, UV.x);
-		vec3 color = mix(vec3(0.05, 0.15, 0.23), vec3(0.09, 0.26, 0.32), UV.y);
-		COLOR = vec4(color, 0.07 + left * 0.37 + bottom * 0.23 + edge * 0.11);
+		float shade = portrait
+			? max((1.0 - smoothstep(0.03, 0.30, UV.y)) * 0.58, smoothstep(0.52, 0.85, UV.y) * 0.78)
+			: (1.0 - smoothstep(0.14, 0.68, UV.x)) * 0.71;
+		COLOR = vec4(ink, shade);
 	} else {
-		COLOR = vec4(0.025, 0.11, 0.18, 0.63 + edge * 0.15);
+		COLOR = vec4(ink, 0.69);
 	}
 }

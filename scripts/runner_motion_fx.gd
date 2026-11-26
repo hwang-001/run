@@ -30,6 +30,7 @@ var wind: Array[MeshInstance3D] = []
 var wind_material: ShaderMaterial
 var drift: Array[CPUParticles3D] = []
 var drift_material: StandardMaterial3D
+var wind_violet: ShaderMaterial
 var echo_cursor := 0
 var skid_cursor := 0
 var echo_delay := 0.0
@@ -43,6 +44,7 @@ func setup(player: MurangPlayer) -> void:
 	var plane := QuadMesh.new()
 	plane.size = Vector2.ONE
 	wind_material = _film(WIND_COLOR, true)
+	wind_violet = _film(Color("#b18afb"), true)
 	for index in Tuning.WIND_LIMIT:
 		var streak := _quad(self, plane, wind_material)
 		streak.hide()
@@ -136,7 +138,7 @@ func reset() -> void:
 
 
 func step(dt: float, speed: float, power: float, region: int, player: MurangPlayer) -> void:
-	_update_wind(dt, power)
+	_update_wind(dt, power, region == 3)
 	_update_drift(speed, power, region)
 	var sliding := player.stance > 0.58 and player.elevation < 0.09
 	for echo in echoes:
@@ -145,7 +147,8 @@ func step(dt: float, speed: float, power: float, region: int, player: MurangPlay
 		echo.life = maxf(0.0, echo.life - dt)
 		echo.root.visible = echo.life > 0.0 and not performance_mode
 		echo.root.position.z += speed * dt * 0.54
-		echo.material.set_shader_parameter("tint", Color(TRAIL_COLOR, pow(echo.life / ECHO_LIFE, 1.7) * lerpf(0.065, 0.20, power)))
+		var echo_tint := (Color("#b0a1ff") if echo.parts[0].global_position.x > 0.0 else Color("#89defb")) if region == 3 else TRAIL_COLOR
+		echo.material.set_shader_parameter("tint", Color(echo_tint, pow(echo.life / ECHO_LIFE, 1.7) * lerpf(0.065, 0.20, power)))
 	for skid in skids:
 		if skid.life <= 0.0:
 			continue
@@ -157,7 +160,8 @@ func step(dt: float, speed: float, power: float, region: int, player: MurangPlay
 	echo_delay = maxf(0.0, echo_delay - dt)
 	skid_delay = maxf(0.0, skid_delay - dt)
 	var turning := absf(player.enter_x) > 0.35 and power > 0.33
-	if not performance_mode and echo_delay <= 0.0 and player.model.visible 			and (power > Tuning.TRAIL_THRESHOLD or turning or sliding):
+	if (not performance_mode and echo_delay <= 0.0 and player.model.visible
+			and (power > Tuning.TRAIL_THRESHOLD or turning or sliding)):
 		_capture(player)
 		echo_delay = lerpf(0.091, 0.042, power)
 	if sliding and skid_delay <= 0.0:
@@ -172,7 +176,7 @@ func _capture(player: MurangPlayer) -> void:
 	echo.root.position = Vector3(0, 0, 0.35)
 	echo.parts[0].transform = global_transform.affine_inverse() * player.head_mesh.global_transform
 	echo.parts[1].transform = global_transform.affine_inverse() * player.torso_mesh.global_transform
-	echo.material.set_shader_parameter("tint", Color(TRAIL_COLOR, 0.0))
+	echo.material.set_shader_parameter("tint", Color(0, 0, 0, 0))
 	echo.life = ECHO_LIFE
 	echo.root.show()
 
@@ -188,12 +192,15 @@ func _mark(x: float, steer: float) -> void:
 	skid.model.show()
 
 
-func _update_wind(dt: float, power: float) -> void:
+func _update_wind(dt: float, power: float, neon: bool) -> void:
 	wind_clock = fposmod(wind_clock + dt * lerpf(0.32, 1.75, power), 1024.0)
-	var count := mini(wind.size(), 4 + roundi(20.0 * power))
+	var count := mini(wind.size(), 4 + roundi((24.0 if neon else 20.0) * power))
 	if performance_mode:
 		count = mini(count, 7)
-	wind_material.set_shader_parameter("tint", Color(WIND_COLOR, lerpf(0.12, 0.48, power)))
+	var night := neon and not performance_mode
+	wind_material.set_shader_parameter("tint", Color(Color("#83dcff") if night else WIND_COLOR,
+		lerpf(0.12, 0.50 if night else 0.44, power)))
+	wind_violet.set_shader_parameter("tint", Color("#e6a1ff", lerpf(0.10, 0.57, power)))
 	for index in wind.size():
 		var streak := wind[index]
 		streak.visible = index < count
@@ -202,14 +209,15 @@ func _update_wind(dt: float, power: float) -> void:
 		var time := fposmod(wind_clock + index * 0.618, 1.0)
 		var side := -1.0 if index % 2 == 0 else 1.0
 		var seed := fposmod(index * 0.239, 1.0)
-		streak.position = Vector3(side * lerpf(4.76, 10.2, seed), 0.51 + fposmod(index * 0.58, 3.27), lerpf(-38.0, 7.72, time))
-		streak.scale = Vector3(lerpf(0.013, 0.047, power), lerpf(0.54, 2.62, power) * (0.55 + seed), 1.0)
+		streak.material_override = wind_violet if night and index % 2 == 1 else wind_material
+		streak.position = Vector3(side * lerpf(4.9, 10.2, seed), 0.51 + fposmod(index * 0.58, 3.27), lerpf(-38.0, 7.72, time))
+		streak.scale = Vector3(lerpf(0.013, 0.047, power), lerpf(0.54, 5.2 if night else 2.62, power) * (0.55 + seed), 1.0)
 
 
 func _update_drift(speed: float, power: float, region: int) -> void:
 	if district != region:
 		district = region
-		drift_material.albedo_color = [Color("#f9bbc2"), Color("#d0f2fc"), Color("#d1e785")][region]
+		drift_material.albedo_color = [Color("#f9bbc2"), Color("#d0f2fc"), Color("#d1e785"), Color("#e5b4ff")][region]
 	for particle in drift:
 		particle.emitting = not performance_mode
 		particle.initial_velocity_min = 2.9 + speed * 0.22

@@ -4,6 +4,8 @@ extends Control
 signal start_requested
 signal test_requested(district_id: int)
 signal heart_requested
+signal slow_requested
+signal visibility_requested
 signal graphics_requested
 signal replay_requested
 signal pause_requested
@@ -11,7 +13,7 @@ signal resume_requested
 signal home_requested
 signal mute_requested
 
-enum Screen { TITLE, HUD, PAUSED, HELP, OVER }
+enum Screen { TITLE, HUD, PAUSED, HELP, OVER, DEV }
 
 const INK := Color("#123040")
 const SUBTLE := Color("#476576")
@@ -27,7 +29,7 @@ const MINT := Color("#98f6d9")
 const KOREAN := preload("res://assets/ui/GowunDodum.ttf")
 const DISPLAY := preload("res://assets/ui/Outfit-Medium.ttf")
 const BOLD := preload("res://assets/ui/Outfit-Bold.ttf")
-const HERO := preload("res://assets/ui/murang.webp")
+const TITLE_FONT := preload("res://assets/ui/BlackHanSans.ttf")
 const VEIL := preload("res://scripts/menu_veil.gdshader")
 const HEART := preload("res://assets/ui/lucide/heart.png")
 const PAUSE := preload("res://assets/ui/lucide/pause.png")
@@ -52,8 +54,6 @@ var heart_icons: Array[TextureRect] = []
 var area_label: Label
 var area_icon: TextureRect
 var announcement: Control
-var hero: TextureRect
-var hero_origin := Vector2.ZERO
 var displayed_score := 0.0
 var best := 0
 var bank := 0
@@ -64,6 +64,16 @@ var hearts := Tuning.MAX_HEALTH
 var district := 0
 var pace := 0.0
 var speed := Tuning.START_SPEED
+var base_speed := Tuning.START_SPEED
+var slow_seconds := 0.0
+var slow_recovery := 0.0
+var slow_wave := 0.0
+var visibility_debug := false
+var slow_panel: Control
+var slow_value: Label
+var slow_fill: ColorRect
+var diagnostics: Label
+var visibility_button: Button
 var speed_label: Label
 var heat: ColorRect
 var low_graphics := false
@@ -91,12 +101,20 @@ class SpeedStreaks extends Control:
 	var flash := 0.0
 	var clock := 0.0
 	var limited := false
+	var city := false
+	var wave := 0.0
 
 	func _draw() -> void:
 		if flash > 0.0:
 			var tint := Color(0.98, 0.25, 0.29, flash * 0.24)
 			draw_rect(Rect2(Vector2.ZERO, Vector2(size.x, size.y * 0.029)), tint)
 			draw_rect(Rect2(Vector2(0, size.y * 0.971), Vector2(size.x, size.y * 0.029)), tint)
+		if wave > 0.0:
+			var phase := 1.0 - wave / 0.43
+			var radius := lerpf(30, size.length() * 0.59, phase)
+			for ring in range(1 if limited else 2):
+				draw_arc(size * Vector2(0.50, 0.60), radius + ring * 24.0, 0, TAU, 48,
+					Color(0.42, 0.84, 1.0, wave * (0.70 - ring * 0.25)), 2.5, true)
 		if strength < 0.19:
 			return
 		var center := size * Vector2(0.5, 0.43)
@@ -110,6 +128,9 @@ class SpeedStreaks extends Control:
 			var rim := Vector2(size.x * (0.5 + direction * (0.383 + flow * 0.125)), y * size.y)
 			var line := (rim - center).normalized() * (12.0 + strength * (29.0 + flow * 103.0))
 			var tint := Color(0.83, 0.95, 1.0, strength * sin(flow * PI) * (0.32 if limited else 0.63))
+			if city:
+				tint = Color("#55d8ff").lerp(Color("#e17df6"), float(i % 5) / 4.0).lerp(tint, 0.19)
+				tint.a = strength * sin(flow * PI) * (0.26 if limited else 0.46)
 			draw_line(rim - line, rim, tint, 0.9 + 1.55 * strength, true)
 
 
@@ -160,9 +181,10 @@ func _process(dt: float) -> void:
 	effects.flash = pulse if screen == Screen.HUD else 0.0
 	effects.clock = run_clock
 	effects.limited = low_graphics
+	effects.city = district == 3
+	slow_wave = move_toward(slow_wave, 0.0, dt)
+	effects.wave = slow_wave if screen == Screen.HUD else 0.0
 	effects.queue_redraw()
-	if is_instance_valid(hero):
-		hero.position.y = hero_origin.y + sin(run_clock * 2.1) * 6.0
 	if screen != Screen.HUD or not is_instance_valid(score_label):
 		return
 	displayed_score = lerpf(displayed_score, float(score), 1.0 - exp(-dt * 19.0))
@@ -178,6 +200,19 @@ func _process(dt: float) -> void:
 	speed_label.text = "%.1f m/s" % speed
 	heat.size.x = 117.0 * pace
 	heat.color = MINT.lerp(GOLD, smoothstep(0.46, 1.0, pace))
+	slow_panel.visible = slow_seconds > 0.0 or slow_recovery > 0.0
+	var blue := Color("#80dcff")
+	if slow_seconds > 0.0:
+		slow_value.text = "SLOW TIME   %.1f s" % slow_seconds
+		slow_fill.size.x = 185.0 * slow_seconds / Tuning.SLOW_DURATION
+		slow_fill.color = blue.lerp(GOLD, 0.3 + sin(run_clock * 10.0) * 0.23) if slow_seconds <= 0.85 else blue
+	else:
+		slow_value.text = "속도 복귀"
+		slow_fill.size.x = 185.0 * (1.0 - slow_recovery / Tuning.SLOW_RECOVERY)
+		slow_fill.color = blue
+	if is_instance_valid(diagnostics):
+		diagnostics.text = "기본 %.1f    실제 %.1f m/s    감속 %.1f s" % [base_speed, speed, slow_seconds]
+		visibility_button.text = "윤곽 끄기" if visibility_debug else "장애물 윤곽"
 	heal_time = maxf(0.0, heal_time - dt)
 	if heal_label:
 		heal_label.visible = heal_time > 0.0
@@ -218,16 +253,20 @@ func set_district(next: int, announce: bool) -> void:
 		area_icon.modulate = _district_tint()
 		announcement_icon.texture = _district_icon()
 		announcement_icon.modulate = _district_tint()
-		announcement_label.text = "%s 진입" % Tuning.DISTRICTS[district].name
+		announcement_label.text = _district_announcement()
 		_sync_announcement()
 
 
 func _district_icon() -> Texture2D:
-	return [PIN, WAVES, FOREST_ICON][district]
+	return [PIN, WAVES, FOREST_ICON, WALK][district]
 
 
 func _district_tint() -> Color:
-	return [MINT, GOLD, Color("#bde991")][district]
+	return [MINT, GOLD, Color("#bde991"), Color("#a4d8ff")][district]
+
+
+func _district_announcement() -> String:
+	return "NEON CITY · 네온 시티" if district == 3 else "%s 진입" % Tuning.DISTRICTS[district].name
 
 
 func _sync_announcement() -> void:
@@ -272,7 +311,8 @@ func _layout() -> void:
 	for child in panels.get_children():
 		panels.remove_child(child)
 		child.queue_free()
-	hero = null
+	diagnostics = null
+	visibility_button = null
 	announcement = null
 	heal_label = null
 	heart_icons.clear()
@@ -291,6 +331,7 @@ func _layout() -> void:
 		Screen.HELP: _help()
 		Screen.PAUSED: _paused()
 		Screen.OVER: _over()
+		Screen.DEV: _dev()
 
 
 func _box(color: Color, radius: int, border := Color.TRANSPARENT, width := 0, shadow := 0) -> StyleBoxFlat:
@@ -354,14 +395,17 @@ func _button(value: String, rect: Rect2, callback: Callable, primary := false, f
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.add_theme_font_override("font", KOREAN)
 	button.add_theme_font_size_override("font_size", font_size)
+	var cover := screen == Screen.TITLE
+	var tint := PAPER if cover and not primary else INK
 	for color_name in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-		button.add_theme_color_override(color_name, Color("#092c36") if primary else INK)
-	var color := SURF if primary else PAPER
-	var edge := Color("#087a70") if primary else Color("#a9c9cc")
-	button.add_theme_stylebox_override("normal", _box(color, 17, edge, 2, 6 if primary else 0))
-	button.add_theme_stylebox_override("hover", _box(MINT if primary else PALE, 17, edge, 2, 5))
-	button.add_theme_stylebox_override("pressed", _box(Color("#39ceaf") if primary else Color("#dcefed"), 17, edge, 2))
-	button.add_theme_stylebox_override("focus", _box(Color.TRANSPARENT, 17, Color("#ffbc4b"), 3))
+		button.add_theme_color_override(color_name, tint)
+	var color := (GOLD if primary else Color(0.04, 0.11, 0.17, 0.64)) if cover else (SURF if primary else PAPER)
+	var edge := Color(1, 1, 1, 0.30) if cover else (Color("#087a70") if primary else Color("#a9c9cc"))
+	var hover := (Color("#ffe1a4") if primary else Color("#2b4854")) if cover else (MINT if primary else PALE)
+	button.add_theme_stylebox_override("normal", _box(color, 9, edge, 1))
+	button.add_theme_stylebox_override("hover", _box(hover, 9, edge, 1))
+	button.add_theme_stylebox_override("pressed", _box(color.darkened(0.18), 9, edge, 1))
+	button.add_theme_stylebox_override("focus", _box(Color.TRANSPARENT, 9, GOLD, 2))
 	button.mouse_entered.connect(func(): _button_scale(button, 1.026))
 	button.mouse_exited.connect(func(): _button_scale(button, 1.0))
 	button.button_down.connect(func(): _button_scale(button, 0.965))
@@ -381,68 +425,55 @@ func _button_scale(button: Button, amount: float) -> void:
 
 
 func _title() -> void:
-	var x := maxf(54.0, (units.x - 1130.0) * 0.43)
-	var y := maxf(41.0, (units.y - 618.0) * 0.5)
-	var width := 472.0
-	var stats_y := y + 256.0
+	var width := 454.0
+	var x := maxf(55.0, units.x * 0.075)
+	var y := units.y * 0.25
+	var stats_y := y + 180.0
+	var align := HORIZONTAL_ALIGNMENT_LEFT
 	if portrait:
 		x = (units.x - width) * 0.5
-		y = 49.0 + maxf(0.0, units.y - 1080.0) * 0.36
-		stats_y = y + 520.0
-		_panel(Rect2(x - 34, y - 25, width + 68, 955), Color(1, 0.985, 0.94, 0.96), 37, Color("#c6e3d9"), 2, 13)
-		hero = _icon(HERO, Vector2(x + 72, y + 189), 328)
-		hero_origin = hero.position
-	else:
-		_panel(Rect2(x - 24, y - 20, width + 48, 615), Color(1, 0.988, 0.945, 0.976), 34, Color("#cfecdd"), 2, 12)
-		var art_size := minf(595.0, units.x - x - width - 70.0)
-		var art_x := units.x - art_size - maxf(26.0, (units.x - 1280.0) * 0.34)
-		var art_y := units.y * 0.5 - art_size * 0.50
-		var radius := art_size * 0.79
-		_panel(Rect2(art_x + (art_size - radius) / 2, art_y + 53, radius, radius),
-			Color(1, 0.91, 0.69, 0.27), int(radius), Color(1, 0.92, 0.74, 0.8), 2)
-		hero = _icon(HERO, Vector2(art_x, art_y), art_size)
-		hero_origin = hero.position
-
-	var colors := [PALE, Color("#ffe8d7"), Color("#e3f0cc")]
-	var icons := [PIN, WAVES, FOREST_ICON]
-	for route in Tuning.DISTRICTS.size():
-		var at := x + route * 128
-		_panel(Rect2(at, y, 120, 32), colors[route], 16)
-		_icon(icons[route], Vector2(at + 8, y + 7), 18, Color("#197a67"))
-		_text(Tuning.DISTRICTS[route].name, Rect2(at + 31, y + 1, 88, 30), 17)
-	_text("v0.3", Rect2(x + 398, y, 72, 31), 18, SUBTLE, DISPLAY, HORIZONTAL_ALIGNMENT_RIGHT)
-	var title := _text("무랑 런", Rect2(x - 3, y + 45, width, 105), 98 if not portrait else 92)
-	title.add_theme_constant_override("outline_size", 5)
-	title.add_theme_color_override("font_outline_color", INK)
-	_text("MURANG RUN", Rect2(x + 2, y + 155, width, 44), 45, Color("#237d73"), BOLD)
-
-	_metric("최고 기록", format_number(best), Rect2(x, stats_y, 228, 72), TROPHY, GOLD)
-	_metric("누적 코인", format_number(bank), Rect2(x + 244, stats_y, 228, 72), COIN, GOLD)
-	var by := stats_y + 89.0
-	_button("게임 시작  ·  0m", Rect2(x, by, width, 62), func(): start_requested.emit(), true, 28)
-	_icon(PLAY, Vector2(x + 21, by + 18), 24, INK)
-	var controls_y := by + 74.0
-	if Tuning.ENABLE_DISTRICT_TEST:
-		var test_labels := ["해변 맵 테스트", "신규 숲 맵 테스트"]
-		for i in range(2):
-			var id := i + 1
-			var test_at := format_number(int(Tuning.DISTRICTS[id].start))
-			var rect := Rect2(x + i * 244.0, controls_y, 228, 61 if portrait else 55)
-			var press_test := func(): test_requested.emit(id)
-			if portrait:
-				_button("", rect, press_test)
-				_text(test_labels[i], Rect2(rect.position + Vector2(0, 4), Vector2(228, 29)),
-					22, INK, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
-				_text("%s m" % test_at, Rect2(rect.position + Vector2(0, 31), Vector2(228, 22)),
-					18, SUBTLE, BOLD, HORIZONTAL_ALIGNMENT_CENTER)
-			else:
-				_button("%s · %sm" % [test_labels[i], test_at], rect, press_test, false, 18)
-		controls_y += 72.0 if portrait else 66.0
-	_button("조작 방법", Rect2(x, controls_y, 193, 50), func(): show_screen(Screen.HELP), false, 21)
+		y = units.y * 0.045
+		stats_y = units.y - 297.0
+		align = HORIZONTAL_ALIGNMENT_CENTER
+	var title := _text("무랑 런", Rect2(x - 2, y, width, 123), 108, PAPER, TITLE_FONT, align)
+	title.add_theme_color_override("font_shadow_color", Color(0.035, 0.095, 0.14, 0.68))
+	title.add_theme_constant_override("shadow_offset_y", 4)
+	_text("MURANG RUN", Rect2(x + 3, y + 119, width, 37), 25, GOLD, BOLD, align)
+	_record("최고 기록", format_number(best), Vector2(x, stats_y), TROPHY, true)
+	_record("누적 코인", format_number(bank), Vector2(x + 239, stats_y), COIN, true)
+	var by := stats_y + 71.0
+	_button("게임 시작", Rect2(x, by, width, 60), func(): start_requested.emit(), true, 28)
+	_icon(PLAY, Vector2(x + 18, by + 17), 25, INK)
+	var controls_y := by + 73.0
+	_button("조작 방법", Rect2(x, controls_y, 175, 48), func(): show_screen(Screen.HELP), false, 22)
 	_button("그래픽 낮음" if low_graphics else "그래픽 표준",
-		Rect2(x + 202, controls_y, 177, 50), func(): graphics_requested.emit(), false, 20)
-	_button("", Rect2(x + 388, controls_y, 84, 50), func(): mute_requested.emit())
-	_icon(SILENT if muted else SOUND, Vector2(x + 418, controls_y + 13), 24, INK)
+		Rect2(x + 185, controls_y, 198, 48), func(): graphics_requested.emit(), false, 22)
+	var sound_button := _button("", Rect2(x + 393, controls_y, 61, 48), func(): mute_requested.emit())
+	sound_button.tooltip_text = "소리 켜기" if muted else "소리 끄기"
+	_icon(SILENT if muted else SOUND, Vector2(x + 411, controls_y + 12), 24, PAPER)
+	if Tuning.ENABLE_DISTRICT_TEST:
+		_button("개발자 테스트", Rect2(x, controls_y + 60, 167, 43), func(): show_screen(Screen.DEV), false, 19)
+
+
+func _record(caption: String, value: String, at: Vector2, texture: Texture2D, on_scene := false) -> void:
+	var ink := PAPER if on_scene else INK
+	var accent := GOLD if on_scene else Color("#357978")
+	_icon(texture, at + Vector2(0, 7), 21, accent)
+	_text(caption, Rect2(at + Vector2(29, 1), Vector2(145, 28)), 19, ink)
+	_text(value, Rect2(at + Vector2(29, 29), Vector2(172, 33)), 26, ink, BOLD)
+
+
+func _dev() -> void:
+	var at := _dialog(479, "개발자 테스트")
+	for id in Tuning.DISTRICTS.size():
+		var stage: Dictionary = Tuning.DISTRICTS[id]
+		var distance_text := format_number(int(stage.start))
+		_button("%s   ·   %s m" % [stage.name, distance_text],
+			Rect2(at + Vector2(28, 104 + id * 64), Vector2(474, 52)),
+			func(): test_requested.emit(id), false, 23)
+	_text("테스트 기록은 저장되지 않습니다", Rect2(at + Vector2(28, 363), Vector2(474, 25)),
+		18, SUBTLE, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
+	_button("돌아가기", Rect2(at + Vector2(28, 401), Vector2(474, 51)), func(): show_screen(Screen.TITLE), true)
 
 
 func _metric(caption: String, value: String, rect: Rect2, texture: Texture2D, accent: Color, animate := false) -> Label:
@@ -513,9 +544,28 @@ func _hud() -> void:
 	heal_label.add_theme_color_override("font_outline_color", NAVY)
 	heal_label.add_theme_constant_override("outline_size", 7)
 	heal_label.visible = heal_time > 0.0
+	slow_panel = Control.new()
+	slow_panel.visible = false
+	slow_panel.mouse_filter = MOUSE_FILTER_IGNORE
+	panels.add_child(slow_panel)
+	var timer_at := Vector2(w - 232, top + 127) if not portrait else Vector2(w - 232, top + 133)
+	_panel(Rect2(timer_at, Vector2(210, 49)), NAVY, 8, Color("#73c7ee"), 1, 0, slow_panel)
+	slow_value = _text("SLOW TIME", Rect2(timer_at + Vector2(12, 1), Vector2(185, 29)),
+		20, PAPER, KOREAN, HORIZONTAL_ALIGNMENT_CENTER, slow_panel)
+	_panel(Rect2(timer_at + Vector2(12, 35), Vector2(185, 4)), EDGE, 2, Color.TRANSPARENT, 0, 0, slow_panel)
+	slow_fill = ColorRect.new()
+	slow_fill.position = timer_at + Vector2(12, 35)
+	slow_fill.size = Vector2(185, 4)
+	slow_fill.mouse_filter = MOUSE_FILTER_IGNORE
+	slow_panel.add_child(slow_fill)
 	if test_run:
-		_button("하트 생성 · H", Rect2(w - 197, units.y - 70, 175, 46),
-			func(): heart_requested.emit(), false, 20)
+		var row_y := units.y - 64.0
+		_panel(Rect2(left, row_y - 32, 388, 28), NAVY, 6)
+		diagnostics = _text("", Rect2(left + 8, row_y - 32, 371, 28), 17, PAPER)
+		_button("하트 · H", Rect2(left, row_y, 119, 44), func(): heart_requested.emit(), false, 19)
+		_button("감속 · T", Rect2(left + 129, row_y, 119, 44), func(): slow_requested.emit(), false, 19)
+		visibility_button = _button("장애물 윤곽", Rect2(left + 258, row_y, 130, 44),
+			func(): visibility_requested.emit(), false, 19)
 	announcement = Control.new()
 	announcement.mouse_filter = MOUSE_FILTER_IGNORE
 	panels.add_child(announcement)
@@ -523,18 +573,19 @@ func _hud() -> void:
 	var banner_x := w * 0.5 - 172.0
 	_panel(Rect2(banner_x, banner_y, 344, 52), NAVY, 16, GOLD, 2, 6, announcement)
 	announcement_icon = _icon(_district_icon(), Vector2(banner_x + 20, banner_y + 15), 22, _district_tint(), announcement)
-	announcement_label = _text("%s 진입" % Tuning.DISTRICTS[district].name,
+	announcement_label = _text(_district_announcement(),
 		Rect2(banner_x + 56, banner_y, 276, 50), 24, PAPER, KOREAN, HORIZONTAL_ALIGNMENT_LEFT, announcement)
 	_sync_announcement()
 
 
-func _dialog(height: float, name: String, caption: String) -> Vector2:
+func _dialog(height: float, name: String, caption := "") -> Vector2:
 	var width := 530.0
 	var at := (units - Vector2(width, height)) * 0.5
-	_panel(Rect2(at, Vector2(width, height)), PAPER, 31, Color("#a5d7d2"), 3, 12)
-	_panel(Rect2(at + Vector2(23, 23), Vector2(width - 46, 30)), PALE, 14)
-	_text(caption, Rect2(at + Vector2(35, 22), Vector2(width - 70, 32)), 18, SUBTLE, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
-	_text(name, Rect2(at + Vector2(20, 65), Vector2(width - 40, 64)), 43, INK, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
+	_panel(Rect2(at, Vector2(width, height)), PAPER, 13, Color("#a5d7d2"), 1, 6)
+	if not caption.is_empty():
+		_text(caption, Rect2(at + Vector2(35, 23), Vector2(width - 70, 30)), 20, SUBTLE, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
+	var y := 53.0 if not caption.is_empty() else 24.0
+	_text(name, Rect2(at + Vector2(20, y), Vector2(width - 40, 65)), 44, INK, TITLE_FONT, HORIZONTAL_ALIGNMENT_CENTER)
 	return at
 
 
@@ -569,18 +620,18 @@ func _paused() -> void:
 func _over() -> void:
 	var caption := "TEST MODE" if test_run else ("새로운 최고 기록!" if new_best else Tuning.DISTRICTS[district].name as String)
 	var at := _dialog(505, "달리기 결과", caption)
-	_panel(Rect2(at + Vector2(26, 136), Vector2(478, 120)), NAVY, 23, EDGE, 2)
-	_text("최종 점수", Rect2(at + Vector2(28, 145), Vector2(474, 24)), 18, GOLD, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
-	_text(format_number(score), Rect2(at + Vector2(28, 170), Vector2(474, 71)), 61, PAPER, BOLD, HORIZONTAL_ALIGNMENT_CENTER)
+	_text("최종 점수", Rect2(at + Vector2(28, 145), Vector2(474, 24)), 18, SUBTLE, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
+	_text(format_number(score), Rect2(at + Vector2(28, 170), Vector2(474, 71)), 61, INK, BOLD, HORIZONTAL_ALIGNMENT_CENTER)
 	if new_best:
 		var glints := RecordGlints.new()
 		glints.position = at + Vector2(26, 143)
 		glints.size = Vector2(478, 100)
 		glints.mouse_filter = MOUSE_FILTER_IGNORE
 		panels.add_child(glints)
-	_metric("이동 거리", "%s m" % format_number(meters), Rect2(at + Vector2(26, 273), Vector2(154, 70)), WALK, MINT)
-	_metric("획득 코인", format_number(coins), Rect2(at + Vector2(188, 273), Vector2(154, 70)), COIN, GOLD)
-	_metric("최고 기록", format_number(best), Rect2(at + Vector2(350, 273), Vector2(154, 70)), TROPHY, GOLD)
+	_panel(Rect2(at + Vector2(26, 255), Vector2(478, 1)), Color("#c9dbdb"), 0)
+	_record("이동 거리", "%s m" % format_number(meters), at + Vector2(30, 275), WALK)
+	_record("획득 코인", format_number(coins), at + Vector2(192, 275), COIN)
+	_record("최고 기록", format_number(best), at + Vector2(350, 275), TROPHY)
 	if test_run:
 		_text("이 주행의 점수와 코인은 저장되지 않습니다", Rect2(at + Vector2(26, 350), Vector2(478, 32)), 19, SUBTLE, KOREAN, HORIZONTAL_ALIGNMENT_CENTER)
 	_button("다시 달리기", Rect2(at + Vector2(26, 390), Vector2(296, 65)), func(): replay_requested.emit(), true, 25)

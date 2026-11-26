@@ -14,7 +14,9 @@ void fragment() {
 	float lace = pow(0.5 + 0.5 * ripple, 12.0) * (0.15 + front * 0.50);
 	float shoal = 1.0 - smoothstep(4.5, 35.0, abs(p.x));
 	float foam = (1.0 - smoothstep(0.05, 0.65, abs(abs(p.x) - 5.1 + ripple * 0.23))) * 0.25;
+	float swell = 0.5 + 0.5 * sin(p.x * 0.51 + p.y * 0.22 + front * 1.4 - TIME * 1.03);
+	float sun_glint = pow(swell, 24.0) * pow(max(0.0, ripple), 5.0);
 	vec3 water = mix(vec3(0.095, 0.46, 0.60), vec3(0.18, 0.73, 0.68), shoal);
 	ALBEDO = mix(water, vec3(0.88, 0.98, 0.87), lace * 0.33 + foam)
-		+ vec3(0.025, 0.044, 0.03) * (front - 0.5);
+		+ vec3(0.025, 0.044, 0.03) * (front - 0.5) + vec3(0.25, 0.19, 0.09) * sun_glint;
 }
