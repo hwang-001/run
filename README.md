@@ -2,7 +2,7 @@
 
 **v0.4** · 계산기와 하트를 단 무랑이가 세 레인을 달리는 3D 아케이드 게임입니다. 시티 파크에서 출발해 산호빛 항구와 솔바람 계곡을 지나 네온 시티까지 이어집니다.
 
-[Windows x64 다운로드](https://github.com/hwang-001/run/releases/download/v0.4.0/MurangRun-v0.4-Windows-x64.zip) · [웹 빌드 다운로드](https://github.com/hwang-001/run/releases/download/v0.4.0/MurangRun-v0.4-Web.zip) · [v0.4 릴리스](https://github.com/hwang-001/run/releases/tag/v0.4.0)
+[Windows x64 다운로드](https://github.com/hwang-001/run/releases/download/v0.4.1/MurangRun-v0.4-Windows-x64.zip) · [웹 빌드 다운로드](https://github.com/hwang-001/run/releases/download/v0.4.1/MurangRun-v0.4-Web.zip) · [v0.4 릴리스](https://github.com/hwang-001/run/releases/tag/v0.4.1)
 
 Windows에서는 ZIP을 풀고 **MurangRun.exe**를 실행하세요. 게임 데이터가 실행 파일에 포함되어 있어 Godot 설치나 인터넷 연결 없이 플레이할 수 있습니다. 배포 실행 파일에는 코드 서명이 없습니다.
 
@@ -70,7 +70,7 @@ Godot Compatibility 렌더러와 웹 단일 스레드 템플릿을 사용합니�
 
 자동 검증에서 키보드·스와이프, 점프와 슬라이딩, 충돌과 저장, 12개 코스 시드의 열린 레인, 1,500m·3,000m·4,500m 전환과 아이템 유지, 테스트 기록 격리와 감속 복귀를 확인했습니다. 100개 시드에서 적격 하트 11,013회 중 1,102회(10.01%), 적격 슬로우 타임 10,987회 중 2,252회(20.50%)가 생성됐습니다. 12분 시뮬레이션 동안 노드 수가 유지됐고 청크가 558회 재사용됐습니다.
 
-실제 게임 프레임은 Linux의 Compatibility 렌더러에서 캡처했습니다. 실물 저사양 모바일의 FPS와 Safari/iOS, Windows GPU별 렌더링 성능은 측정하지 않았습니다.
+실제 게임 프레임은 Linux의 Compatibility 렌더러에서 캡처했습니다. Chromium에서 데스크톱 키보드와 390×844 터치 화면으로 숲 및 네온 시티 주행을 확인했습니다. 실물 저사양 모바일의 FPS와 Safari/iOS, Windows GPU별 렌더링 성능은 측정하지 않았습니다.
 
 ## 에셋 및 라이선스
 

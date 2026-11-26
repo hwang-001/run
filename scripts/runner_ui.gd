@@ -548,7 +548,8 @@ func _hud() -> void:
 	slow_panel.visible = false
 	slow_panel.mouse_filter = MOUSE_FILTER_IGNORE
 	panels.add_child(slow_panel)
-	var timer_at := Vector2(w - 232, top + 127) if not portrait else Vector2(w - 232, top + 133)
+	var banner_y := area_y + (58 if portrait else 3)
+	var timer_at := Vector2(w - 232, banner_y + (62 if portrait else 56))
 	_panel(Rect2(timer_at, Vector2(210, 49)), NAVY, 8, Color("#73c7ee"), 1, 0, slow_panel)
 	slow_value = _text("SLOW TIME", Rect2(timer_at + Vector2(12, 1), Vector2(185, 29)),
 		20, PAPER, KOREAN, HORIZONTAL_ALIGNMENT_CENTER, slow_panel)
@@ -569,7 +570,6 @@ func _hud() -> void:
 	announcement = Control.new()
 	announcement.mouse_filter = MOUSE_FILTER_IGNORE
 	panels.add_child(announcement)
-	var banner_y := area_y + (58 if portrait else 3)
 	var banner_x := w * 0.5 - 172.0
 	_panel(Rect2(banner_x, banner_y, 344, 52), NAVY, 16, GOLD, 2, 6, announcement)
 	announcement_icon = _icon(_district_icon(), Vector2(banner_x + 20, banner_y + 15), 22, _district_tint(), announcement)
